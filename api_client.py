@@ -19,6 +19,7 @@ volume de requetes raisonnable.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -1745,7 +1746,12 @@ def _fs_match_info(match_id: str) -> dict[str, Any]:
     L'arbitre n'est publie que tardivement -- souvent le jour du match, parfois
     seulement apres. Son absence n'est donc pas une anomalie.
     """
-    payload = _fs_get("df_sui_%d_%s" % (FS_SPORT, match_id))
+    return _fs_parse_match_info(_fs_get("df_sui_%d_%s" % (FS_SPORT, match_id)))
+
+
+def _fs_parse_match_info(payload: str) -> dict[str, Any]:
+    """Couples MIT/MIV du flux `df_sui_` : separe de la requete pour que la
+    feuille de match lise le meme flux sans le telecharger deux fois."""
     labels = {
         "REF": "arbitre",
         "RCC": "arbitre_pays",
@@ -1942,6 +1948,10 @@ def _fs_lineups(match_id: str) -> dict[str, Any]:
         return {
             "systeme": "", "titulaires": [], "onze": [],
             "remplacants": [], "absents": [],
+            # Identifiants : un nom abrege ("Cooper J.") n'identifie personne
+            # d'un club a l'autre, `LP` si -- c'est le meme que `IM` dans le fil
+            # des evenements, ce qui relie un carton a une composition.
+            "banc": [], "entraineur": {},
         }
 
     sides: dict[str, dict[str, Any]] = {"domicile": _vide(), "exterieur": _vide()}
@@ -1952,12 +1962,15 @@ def _fs_lineups(match_id: str) -> dict[str, Any]:
             section = _FS_LINEUP_SECTIONS.get(_plain(block["LB"]), "")
         if "LC" in block:
             side = {"1": "domicile", "2": "exterieur"}.get(block["LC"], side)
-        if "LD" in block and side:
+        if "LD" in block and side and section != "entraineurs":
             sides[side]["systeme"] = block["LD"]
         name = block.get("LI") or block.get("LN")
-        if not name or not section or not side or section == "entraineurs":
+        if not name or not section or not side:
             continue
         name = name.strip()
+        if section == "entraineurs":
+            sides[side]["entraineur"] = {"nom": name, "id": block.get("LP", "")}
+            continue
         sides[side][section].append(name)
         if section == "titulaires":
             sides[side]["onze"].append(
@@ -1965,8 +1978,11 @@ def _fs_lineups(match_id: str) -> dict[str, Any]:
                     "joueur": name,
                     "numero": _int_or_none(block.get("LJ")),
                     "place": _int_or_none(block.get("LL")),
+                    "id": block.get("LP", ""),
                 }
             )
+        elif section == "remplacants":
+            sides[side]["banc"].append({"joueur": name, "id": block.get("LP", "")})
 
     for bloc in sides.values():
         # Le flux liste les titulaires par ordre alphabetique ; on les remet
@@ -1999,6 +2015,414 @@ def lineups(match: dict[str, Any], use_cache: bool = True) -> dict[str, Any]:
         return {}
     cache.set(key, found)
     return found
+
+
+def _minute(texte: str) -> int | None:
+    """"90+2'" -> 90. Le temps additionnel reste dans sa periode."""
+    tete = (texte or "").replace("'", "").split("+", 1)[0].strip()
+    return int(tete) if tete.isdigit() else None
+
+
+def _fs_parse_incidents(payload: str) -> list[dict[str, Any]]:
+    """Cartons et changements du fil des evenements d'un match termine.
+
+    Un bloc `III` est un temps du match (un cote `IA`, une minute `IB`) qui peut
+    porter plusieurs incidents : un changement en porte deux, l'entrant et le
+    sortant, chacun ouvert par son `IE`. `_fs_blocks` ecraserait l'un par
+    l'autre, d'ou la lecture sequentielle.
+    """
+    incidents: list[dict[str, Any]] = []
+    for numero, block in enumerate(payload.split(FS_BLOCK)):
+        side = ""
+        minute: int | None = None
+        courant: dict[str, Any] | None = None
+        for record in block.split(FS_FIELD):
+            key, sep, value = record.partition(FS_KV)
+            if not sep:
+                continue
+            if key == "IA":
+                side = {"1": "domicile", "2": "exterieur"}.get(value, "")
+            elif key == "IB":
+                minute = _minute(value)
+            elif key == "IE":
+                courant = {"cote": side, "minute": minute, "code": value, "bloc": numero}
+                incidents.append(courant)
+            elif courant is not None and key in ("IF", "IK", "IM", "IL"):
+                courant[{"IF": "joueur", "IK": "type", "IM": "id", "IL": "motif"}[key]] = value
+    rendu: list[dict[str, Any]] = []
+    for incident in incidents:
+        genre = _plain(incident.get("type", ""))
+        if "carton" in genre:
+            # "Carton Jaune/Rouge" : le second jaune. Il compte comme un jaune
+            # dans la plupart des statistiques, et il dit surtout que le joueur
+            # etait deja averti.
+            if "jaune" in genre and "rouge" in genre:
+                incident["type"] = "deuxieme_jaune"
+            elif "rouge" in genre:
+                incident["type"] = "rouge"
+            else:
+                incident["type"] = "jaune"
+        elif "changement" in genre:
+            # Le SENS du changement ne se lit pas au libelle : le flux annonce
+            # parfois "entrant" le titulaire qui sort (verifie contre les
+            # compositions). `_temps_de_jeu` le deduit de qui est sur le terrain.
+            incident["type"] = "changement"
+        else:
+            continue
+        if incident["cote"] and incident.get("id"):
+            incident.pop("code", None)
+            rendu.append(incident)
+    return rendu
+
+
+def _temps_de_jeu(
+    bloc: dict[str, Any], cote: str, incidents: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Joueurs d'un cote qui ont joue, avec leurs minutes sur le terrain.
+
+    Un titulaire joue de 0 jusqu'a sa sortie (90 sinon) ; un remplacant de son
+    entree jusqu'a sa sortie. Un exclu cesse de jouer a son exclusion : ses
+    minutes restantes ne l'exposent plus a rien.
+    """
+    titulaires = {j["id"] for j in bloc.get("onze") or [] if j.get("id")}
+    sur_le_terrain = set(titulaires)
+    # La place dans le dispositif (1 = gardien, puis de la defense vers
+    # l'attaque) : un remplacant prend celle du joueur qu'il remplace.
+    place = {j["id"]: j.get("place") for j in bloc.get("onze") or [] if j.get("id")}
+    entree: dict[str, int] = {}
+    fin: dict[str, int] = {}
+    paires: dict[int, list[dict[str, Any]]] = {}
+    for incident in incidents:
+        if incident["cote"] != cote or incident["minute"] is None:
+            continue
+        if incident["type"] == "changement":
+            paires.setdefault(incident["bloc"], []).append(incident)
+        elif incident["type"] in ("rouge", "deuxieme_jaune"):
+            fin.setdefault(incident["id"], incident["minute"])
+    for paire in sorted(paires.values(), key=lambda p: p[0]["minute"]):
+        if len(paire) != 2:
+            continue
+        a, b = paire
+        # Celui qui est sur le terrain sort, l'autre entre.
+        sortant, entrant = (a, b) if a["id"] in sur_le_terrain else (b, a)
+        if sortant["id"] not in sur_le_terrain:
+            continue
+        sur_le_terrain.discard(sortant["id"])
+        sur_le_terrain.add(entrant["id"])
+        fin.setdefault(sortant["id"], sortant["minute"])
+        entree[entrant["id"]] = entrant["minute"]
+        place.setdefault(entrant["id"], place.get(sortant["id"]))
+
+    def _sortie(pid: str) -> int:
+        return fin.get(pid, 90)
+
+    joueurs: list[dict[str, Any]] = []
+    for j in bloc.get("onze") or []:
+        if j.get("id"):
+            joueurs.append({
+                "id": j["id"], "joueur": j["joueur"], "titulaire": True,
+                "minutes": max(0, _sortie(j["id"])), "place": place.get(j["id"]),
+            })
+    for j in bloc.get("banc") or []:
+        pid = j.get("id")
+        if pid and pid in entree:
+            joueurs.append({
+                "id": pid, "joueur": j["joueur"], "titulaire": False,
+                "minutes": max(0, _sortie(pid) - entree[pid]), "place": place.get(pid),
+            })
+    return joueurs
+
+
+def feuille_de_match(match_id: str, use_cache: bool = True) -> dict[str, Any]:
+    """Arbitre, entraineurs, systemes, temps de jeu et cartons d'un match termine.
+
+    La matiere du modele des cartons : qui arbitrait, qui entrainait, qui a joue
+    combien de minutes, et qui a ete averti. Deux requetes -- le fil des
+    evenements et les compositions -- gardees trente jours : un match termine ne
+    change plus.
+
+    Rend {} si le fil est vide (match trop ancien ou competition non suivie). Une
+    feuille sans compositions reste utile : l'arbitre et les cartons suffisent au
+    profil de l'arbitre.
+    """
+    if not match_id:
+        return {}
+    key = "v%d|feuille2|%s" % (CACHE_SCHEMA, match_id)
+    if use_cache:
+        cached = cache.get(key, CONTEXT_TTL)
+        if cached is not None:
+            return cached
+    try:
+        fil = _fs_get("df_sui_%d_%s" % (FS_SPORT, match_id))
+    except ApiError:
+        return {}
+    if not fil.strip():
+        return {}
+    info = _fs_parse_match_info(fil)
+    incidents = _fs_parse_incidents(fil)
+    try:
+        compos = _fs_lineups(match_id)
+    except ApiError:
+        compos = {}
+
+    feuille: dict[str, Any] = {
+        "arbitre": info.get("arbitre", ""),
+        "arbitre_pays": info.get("arbitre_pays", ""),
+        "cartons": [
+            {k: i.get(k) for k in ("cote", "minute", "type", "id", "joueur", "motif")}
+            for i in incidents if i["type"] in ("jaune", "rouge", "deuxieme_jaune")
+        ],
+    }
+    for cote in ("domicile", "exterieur"):
+        bloc = compos.get(cote) or {}
+        feuille[cote] = {
+            "systeme": bloc.get("systeme", ""),
+            "entraineur": bloc.get("entraineur") or {},
+            "joueurs": _temps_de_jeu(bloc, cote, incidents),
+        }
+    cache.set(key, feuille)
+    return feuille
+
+
+# ---------------------------------------------------------------------------
+# Statistiques par joueur (onglet « Stats des joueurs » de Flashscore)
+# ---------------------------------------------------------------------------
+#
+# Le site les sert par son service GraphQL, pas par le flux `df_` : une
+# premiere requete (`epmsse`) donne la liste des joueurs, leur equipe, leur
+# poste et le fournisseur des donnees ; une seconde (`epmsd`) donne, par
+# joueur, une centaine de grandeurs. Couvert : les grands championnats et
+# une bonne partie des autres, depuis au moins l'ete 2025.
+#
+# La seconde reponse pese pres d'un megaoctet -- chaque valeur arrive avec
+# ses cles de tri et de rang. On ne garde que les grandeurs utiles au style de
+# jeu, et seulement celles qui ne valent pas zero.
+PMS_HOST = "https://%d.ds.lsapp.eu/pq_graphql" % FS_PROJECT
+
+STATS_JOUEUR = {
+    "MATCH_MINUTES_PLAYED": "minutes",
+    # Finition
+    "SHOTS_TOTAL": "tirs",
+    "SHOTS_ON_TARGET": "tirs_cadres",
+    "SHOTS_BLOCKED": "tirs_contres",
+    "SHOTS_BOX_IN": "tirs_surface",
+    "SHOTS_BOX_OUT": "tirs_de_loin",
+    "SHOTS_HEAD": "tirs_tete",
+    "EXPECTED_GOALS": "xg",
+    "GOALS": "buts",
+    # Couloirs et percussion : ce qui fabrique les corners
+    "CROSSES_TOTAL": "centres",
+    "CROSSES_ACCURATE": "centres_reussis",
+    "DRIBBLES_TOTAL": "dribbles",
+    "DRIBBLES_WON": "dribbles_reussis",
+    "PROGRESSIVE_CARRIES": "conduites_progressives",
+    "TOUCHES_BOX_OPPOSITE": "touches_surface",
+    "BOX_ENTRIES_TOTAL": "entrees_surface",
+    # Creation
+    "TOUCHES_TOTAL": "touches",
+    "PASSES_TOTAL": "passes",
+    "PASSES_FINAL_THIRD_TOTAL": "passes_dernier_tiers",
+    "LONG_BALLS_TOTAL": "passes_longues",
+    "THROUGH_BALLS": "passes_en_profondeur",
+    "KEY_PASSES": "passes_cles",
+    "EXPECTED_ASSISTS": "xa",
+    "BIG_CHANCES_CREATED": "grosses_occasions_creees",
+    # Defense : degager et contrer, c'est aussi CONCEDER des corners
+    "CLEARANCES": "degagements",
+    "OUTFIELDER_BLOCKS": "contres",
+    "INTERCEPTIONS": "interceptions",
+    "TACKLES_TOTAL": "tacles",
+    "DUELS_AERIAL_WON": "duels_aeriens_gagnes",
+    # Discipline
+    "FOULS_COMMITTED": "fautes",
+    "FOULS_SUFFERED": "fautes_subies",
+    "CARDS_YELLOW": "jaunes",
+    "OFFSIDES": "hors_jeux",
+    "SAVES_TOTAL": "arrets",
+}
+
+# Libelles de poste du fournisseur -> groupe. Ils varient d'un championnat a
+# l'autre (« Defenseur » ici, « Lateral » et « Defenseur central » la).
+_POSTES_PMS = {
+    "gardien": "G", "gardien de but": "G",
+    "defenseur": "D", "defenseur central": "D", "lateral": "D", "piston": "D",
+    "milieu": "M", "milieu de terrain": "M", "milieu defensif": "M",
+    "milieu offensif": "M", "milieu central": "M",
+    "ailier": "A", "attaquant": "A", "buteur": "A", "avant-centre": "A",
+}
+
+
+def _groupe_pms(libelle: str) -> str:
+    cle = _plain(libelle or "").lower().strip()
+    return _POSTES_PMS.get(cle, "?")
+
+
+def _pms(params: dict[str, Any]) -> dict[str, Any]:
+    """Une requete au service GraphQL. {} si le match n'y est pas (404)."""
+    query = "&".join("%s=%s" % kv for kv in params.items())
+    try:
+        texte = _request_text(PMS_HOST + "?" + query, {"Referer": FS_REFERER})
+    except ApiError as exc:
+        if "HTTP 404" in str(exc):
+            return {}
+        raise
+    try:
+        return (json.loads(texte).get("data") or {}).get("findEventPMSById") or {}
+    except ValueError:
+        return {}
+
+
+def stats_joueurs(match_id: str, use_cache: bool = True) -> dict[str, Any]:
+    """Statistiques de chaque joueur d'un match termine.
+
+    Rend {"domicile": [...], "exterieur": [...]}, un joueur par entree :
+
+        {"id", "nom", "poste" (G/D/M/A/?), "poste_libelle", "titulaire",
+         "stats": {"minutes": 90, "tirs": 3, "centres": 7, ...}}
+
+    Seules les grandeurs non nulles figurent dans `stats` ; une grandeur
+    absente vaut zero. Un joueur reste sur le banc (zero minute) est omis.
+    {} si le fournisseur ne couvre pas le match.
+    """
+    if not match_id:
+        return {}
+    key = "v%d|pms|%s" % (CACHE_SCHEMA, match_id)
+    if use_cache:
+        cached = cache.get(key, CONTEXT_TTL)
+        if cached is not None:
+            return cached
+
+    reglages = _pms({"_hash": "epmsse", "eventId": match_id, "projectId": FS_PROJECT})
+    if not reglages or not reglages.get("players"):
+        cache.set(key, {})
+        return {}
+    cotes = {t.get("id"): ("domicile" if t.get("side") == "HOME" else "exterieur")
+             for t in reglages.get("teams") or []}
+    fournisseur = (reglages.get("updateFeedProviderId") or {}).get("id") or 7
+    valeurs = _pms({"_hash": "epmsd", "eventId": match_id, "providerId": fournisseur})
+
+    par_joueur: dict[str, dict[str, float]] = {}
+    for entree in ((valeurs.get("stats") or {}).get("entries") or []):
+        champ = STATS_JOUEUR.get(entree.get("typeId") or "")
+        if not champ:
+            continue
+        try:
+            valeur = float(entree.get("rawValue"))
+        except (TypeError, ValueError):
+            continue
+        if valeur:
+            par_joueur.setdefault(entree.get("playerId") or "", {})[champ] = (
+                int(valeur) if valeur == int(valeur) else round(valeur, 3)
+            )
+
+    resultat: dict[str, Any] = {"domicile": [], "exterieur": []}
+    for joueur in reglages.get("players") or []:
+        participant = joueur.get("participant") or {}
+        stats = par_joueur.get(participant.get("id") or "", {})
+        if not stats.get("minutes"):
+            continue
+        cote = cotes.get(joueur.get("teamId"))
+        if not cote:
+            continue
+        libelle = (joueur.get("position") or {}).get("name") or ""
+        resultat[cote].append({
+            "id": participant.get("id") or "",
+            "nom": participant.get("shortDisplayName") or participant.get("name") or "",
+            "poste": "G" if (joueur.get("position") or {}).get("isGoalkeeper") else _groupe_pms(libelle),
+            "poste_libelle": libelle,
+            "titulaire": bool(joueur.get("inBaseLineup")),
+            "stats": stats,
+        })
+    if not resultat["domicile"] and not resultat["exterieur"]:
+        resultat = {}
+    cache.set(key, resultat)
+    return resultat
+
+
+# Championnats suivis pour le catalogue des styles : (pays, championnat) dans
+# les URL de flashscore.fr, et le nom que l'archive donne a la competition. Le
+# nom seul ne suffit pas -- « Premier League » designe aussi celles du
+# Kazakhstan, du Ghana ou d'Armenie.
+CHAMPIONNATS_STYLES = {
+    "angleterre": ("angleterre", "premier-league", "Premier League"),
+    "espagne": ("espagne", "laliga", "LaLiga"),
+    "italie": ("italie", "serie-a", "Serie A"),
+    "allemagne": ("allemagne", "bundesliga", "Bundesliga"),
+    "france": ("france", "ligue-1", "Ligue 1"),
+    "portugal": ("portugal", "liga-portugal", "Liga Portugal"),
+    "pays-bas": ("pays-bas", "eredivisie", "Eredivisie"),
+}
+
+
+def _saison_url(pays: str, championnat: str, saison: str) -> str:
+    """Page des resultats d'une saison. `saison` vide : la saison en cours."""
+    suffixe = "-%s" % saison if saison else ""
+    return "https://www.flashscore.fr/football/%s/%s%s/resultats/" % (pays, championnat, suffixe)
+
+
+def _matchs_du_flux(payload: str) -> list[dict[str, Any]]:
+    matchs = []
+    for block in _fs_blocks(payload):
+        if "AA" not in block:
+            continue
+        if _fs_status(block) != FINISHED:
+            continue
+        kickoff = _int_or_none(block.get("AD"))
+        iso = _utc_iso(kickoff) if kickoff else ""
+        matchs.append({
+            "match_id": block["AA"],
+            "date": iso[:10],
+            "kickoff_utc": iso,
+            "domicile": block.get("AE") or "",
+            "exterieur": block.get("AF") or "",
+            "score_domicile": _int_or_none(block.get("AG")),
+            "score_exterieur": _int_or_none(block.get("AH")),
+            "journee": block.get("ER") or "",
+        })
+    return matchs
+
+
+def matchs_de_saison(cle: str, saison: str = "", use_cache: bool = True) -> list[dict[str, Any]]:
+    """Tous les matchs termines d'une saison d'un championnat suivi.
+
+    `cle` : une cle de CHAMPIONNATS_STYLES ; `saison` : "2025-2026", ou vide
+    pour la saison en cours. La page n'embarque que la premiere centaine de
+    matchs ; la suite vient du flux « montrer plus » (`tr_`), page par page.
+    Une saison terminee ne change plus : elle est gardee trente jours, la
+    saison en cours six heures.
+    """
+    pays, championnat, _ = CHAMPIONNATS_STYLES[cle]
+    key = "v%d|saison|%s|%s" % (CACHE_SCHEMA, cle, saison or "courante")
+    if use_cache:
+        cached = cache.get(key, CONTEXT_TTL if saison else 6 * 3600)
+        if cached is not None:
+            return cached
+
+    html = _request_text(_saison_url(pays, championnat, saison), {"Referer": FS_REFERER})
+    debut = html.find("initialFeeds['results']")
+    if debut < 0:
+        return []
+    segment = html[debut:]
+    segment = segment[segment.find("`") + 1:]
+    matchs = _matchs_du_flux(segment[: segment.find("`")])
+
+    ids = re.search(r'country_id = (\d+);tournament_id = "(\w+)"', html)
+    saison_id = re.search(r"seasonId: (\d+)", html)
+    if ids and saison_id:
+        vus = {m["match_id"] for m in matchs}
+        for page in range(1, 10):
+            flux = _fs_get("tr_%d_%s_%s_%s_%d_%d_fr_1" % (
+                FS_SPORT, ids.group(1), ids.group(2), saison_id.group(1), page,
+                _fs_utc_offset_hours("Europe/Paris")))
+            suite = [m for m in _matchs_du_flux(flux) if m["match_id"] not in vus]
+            if not suite:
+                break
+            matchs.extend(suite)
+            vus.update(m["match_id"] for m in suite)
+
+    matchs.sort(key=lambda m: m["kickoff_utc"])
+    cache.set(key, matchs)
+    return matchs
 
 
 # Profondeur par defaut pour reconstituer un onze probable. Chaque match coute

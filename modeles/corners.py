@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import ModeleParEquipe
+from .styles import AvecStyles
 
 CORNERS_LINE = 9.5
 
@@ -34,9 +35,15 @@ CORRELATION = -0.149
 # fiches seront tranchees.
 CALIBRATION = 1.0
 
+# Styles des joueurs alignes (`styles.py`) : facteur « onze du jour / onzes
+# de reference », eleve a ce poids. Mesure par `mesure_styles.py` ; voir le
+# journal pour le detail.
+POIDS_STYLES = 0.0
 
-class ModeleCorners(ModeleParEquipe):
+
+class ModeleCorners(AvecStyles, ModeleParEquipe):
     cle = "corners"
+    version = "1.0.0"
     libelle = "Corners"
     champ = "corners"
     seuil = CORNERS_LINE
@@ -47,3 +54,4 @@ class ModeleCorners(ModeleParEquipe):
     dispersion = DISPERSION
     correlation = CORRELATION
     calibration = CALIBRATION
+    poids_styles = POIDS_STYLES

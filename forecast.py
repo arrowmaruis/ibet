@@ -142,6 +142,10 @@ def _quantity(entry: dict[str, Any], teams: tuple[str, str]) -> dict[str, Any]:
         # brute et regularisee -- qui dit ce que le modele a retenu de
         # l'echantillon -- etait perdu a l'ecriture.
         quantity["forces"] = entry["forces"]
+    if entry.get("marche"):
+        # L'issue combinee aux cotes : celle du modele seul, celle du marche et
+        # les nombres attendus d'avant calage, pour que le melange se relise.
+        quantity["marche"] = entry["marche"]
 
     team_ladder = _team_ladder(entry, teams)
     if team_ladder:
@@ -198,6 +202,7 @@ def to_record(
         "coup_denvoi_local": "%s %s" % (match["date"], match["heure"]),
         "url": match.get("url", ""),
         "reglage": dict(prediction["reglage"]),
+        "versions": dict(prediction.get("versions") or {}),
         "grandeurs": [_quantity(entry, teams) for entry in prediction["grandeurs"]],
         # Les quatorze criteres tels qu'ils ont ete releves. Ils font partie de
         # l'engagement : relire une fiche avec la meteo ou le classement
@@ -381,7 +386,8 @@ def forecast_match(
     # exactement ce qu'il etait, plutot que d'etre corrige par une force qu'on
     # ne connait pas.
     lambdas_forces = forces.lambdas_attendus(
-        match.get("domicile", ""), match.get("exterieur", "")
+        match.get("domicile", ""), match.get("exterieur", ""),
+        competition=match.get("championnat", ""),
     )
     prediction = predict.build(
         match, form, baseline,

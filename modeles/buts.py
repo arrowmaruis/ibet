@@ -112,9 +112,34 @@ def melanger_lambdas(
     )
 
 
+# Part du modele dans l'issue quand les cotes 1X2 du bookmaker sont connues a
+# l'emission ; le reste va au bookmaker. Melange simple des probabilites : les
+# nombres de buts attendus, donc les seuils, scores exacts et combines, restent
+# ceux du modele (voir `ModeleButs.completer`).
+#
+# Mesure sur 1 784 matchs de 2026 apparies aux cotes de Bet365 avant-match
+# (football-data.co.uk), modele rejoue en walk-forward, Brier 1X2 :
+#
+#     Bet365 seul                         0.5954   favori juste 50.8 %
+#     modele seul                         0.6146   +0.0192, t = +5.4
+#     melange, 10 % modele                0.5958   +0.0004, t = +1.2  <- retenu
+#     melange, 20 % modele                0.5965   +0.0012, t = +1.7
+#     ecart recale, 20 % modele           0.5982   +0.0028, t = +2.6
+#     ecart recale,  0 % modele           0.5972   +0.0019, t = +2.2
+#
+# Memes conclusions contre la cloture de Bet365, la moyenne des bookmakers et
+# BetExplorer (3 731 matchs). Le modele n'ajoute rien au bookmaker sur le 1X2 :
+# le poids choisi mois par mois sur les seuls mois precedents vaut 0 de mars a
+# septembre. 10 % garde une combinaison sans perte mesurable. Recaler l'ECART
+# des nombres attendus sur l'issue melangee -- essaye d'abord, parce qu'il
+# gardait la fiche coherente -- fait moins bien a tout poids : le nul de la
+# matrice est moins juste que celui du bookmaker.
+POIDS_MODELE_ISSUE = 0.1
+
 
 class ModeleButs(ModeleEvenement):
     cle = "buts"
+    version = "2.0.0"
     libelle = "Buts"
     champ = None
     seuil = GOALS_LINE
@@ -164,6 +189,31 @@ class ModeleButs(ModeleEvenement):
         }
         return lam_home, lam_away, trace
 
+    def caler(
+        self,
+        lam: tuple[float, float],
+        apports: dict[str, Any] | None,
+        rho: float,
+        phi_home: float,
+        phi_away: float,
+    ) -> tuple[float, float, dict[str, Any] | None]:
+        """Releve l'issue du bookmaker, sans toucher aux nombres attendus.
+
+        `apports["marche"]` porte les probabilites 1X2 du bookmaker, marge
+        retiree. Elles sont publiees dans la trace `marche` de la fiche, que
+        `completer` lit pour combiner l'issue. Sans elles, rien ne change.
+        """
+        marche = (apports or {}).get("marche")
+        if not marche or any(k not in marche for k in ("domicile", "nul", "exterieur")):
+            return lam[0], lam[1], None
+        return lam[0], lam[1], {
+            "poids_modele": POIDS_MODELE_ISSUE,
+            # Non arrondie : c'est elle qui entre dans le melange.
+            "issue_marche": {
+                k: float(marche[k]) for k in ("domicile", "nul", "exterieur")
+            },
+        }
+
     def completer(
         self,
         entry: dict[str, Any],
@@ -174,8 +224,22 @@ class ModeleButs(ModeleEvenement):
         phi_home: float,
         phi_away: float,
     ) -> list[dict[str, Any]]:
-        """Branche le modele de l'issue sur les nombres de buts definitifs."""
+        """Branche le modele de l'issue sur les nombres de buts definitifs.
+
+        Quand l'issue du bookmaker est connue (trace `marche`), le 1X2 publie
+        et ses propositions sont le melange des deux ; l'issue du modele seul
+        reste dans la trace, pour le critere 13 et pour la relecture.
+        """
         issue = self.issue.prevoir(lam_home, lam_away, rho, phi_home, phi_away)
+        marche = entry.get("marche")
+        if marche:
+            modele = issue["resultat"]
+            marche["issue_modele"] = {k: round(v, 4) for k, v in modele.items()}
+            issue["resultat"] = {
+                k: POIDS_MODELE_ISSUE * modele[k]
+                + (1 - POIDS_MODELE_ISSUE) * marche["issue_marche"][k]
+                for k in modele
+            }
         entry.update(issue)
         return self.issue.candidats(
             teams, issue["resultat"], issue["p_les_deux_marquent"]

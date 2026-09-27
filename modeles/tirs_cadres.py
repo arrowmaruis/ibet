@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import ModeleParEquipe
+from .styles import AvecStyles
 
 SHOTS_LINE = 7.5
 
@@ -17,9 +18,15 @@ CORRELATION = 0.0
 # descend sans direction nette. Pas de recalage.
 CALIBRATION = 1.0
 
+# Styles des joueurs alignes (`styles.py`) : facteur « onze du jour / onzes
+# de reference », eleve a ce poids. Mesure par `mesure_styles.py` ; voir le
+# journal pour le detail.
+POIDS_STYLES = 0.0
 
-class ModeleTirsCadres(ModeleParEquipe):
+
+class ModeleTirsCadres(AvecStyles, ModeleParEquipe):
     cle = "tirs_cadres"
+    version = "1.0.0"
     libelle = "Tirs cadres"
     champ = "tirs_cadres"
     seuil = SHOTS_LINE
@@ -30,3 +37,4 @@ class ModeleTirsCadres(ModeleParEquipe):
     dispersion = DISPERSION
     correlation = CORRELATION
     calibration = CALIBRATION
+    poids_styles = POIDS_STYLES

@@ -10,6 +10,7 @@ Usage : python test_stats.py
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 from datetime import datetime, timedelta
@@ -2401,9 +2402,14 @@ def main() -> int:
     check("le plus grand groupe porte le numero 0", groupes["A"], 0)
 
     print("\nZ. Notes attaque / defense : construction et garde-fous")
+    # La Forte bat la Faible 3-0, chez elle comme chez l'autre : l'alternance
+    # separe la force de l'avantage du terrain, que l'estimation mesure aussi.
     corpus_forces = [
-        {"kickoff_utc": "2026-01-%02d" % (j + 1), "domicile": "Forte",
-         "exterieur": "Faible", "buts_domicile": 3, "buts_exterieur": 0,
+        {"kickoff_utc": "2026-01-%02d" % (j + 1),
+         "domicile": "Forte" if j % 2 == 0 else "Faible",
+         "exterieur": "Faible" if j % 2 == 0 else "Forte",
+         "buts_domicile": 3 if j % 2 == 0 else 0,
+         "buts_exterieur": 0 if j % 2 == 0 else 3,
          "xg_domicile": 2.8, "xg_exterieur": 0.4}
         for j in range(20)
     ]
@@ -2419,20 +2425,55 @@ def main() -> int:
     # Les notes sont bornees : une serie aberrante ne les envoie pas a l'infini.
     check("notes bornees",
           max(abs(v) for v in notes.attaque.values()) <= forces.PLAFOND, True)
-    # Une passe de gradient monte l'attaque quand l'equipe marque plus que prevu.
-    isolee = forces.Forces(0.34, 0.10)
-    avant = isolee.attaque.get("Q", 0.0)
-    isolee.apprendre("Q", "R", 5.0, 0.0)
-    check("marquer plus que prevu monte l'attaque",
-          isolee.attaque["Q"] > avant, True)
-    check("et baisse la defense adverse", isolee.defense["R"] < 0, True)
-    check("les deux equipes comptent un match de plus",
-          (isolee.joues["Q"], isolee.joues["R"]), (1, 1))
-    # Une cible absente ne doit pas deplacer les notes, seulement le compteur.
-    fige = forces.Forces(0.34, 0.10)
-    fige.apprendre("S", "T", None, None)
-    check("sans cible, aucune note ne bouge", fige.attaque, {})
-    check("mais le match est compte", fige.joues["S"], 1)
+    # L'estimation retrouve le score moyen : vingt 3-0 donnent un lambda proche
+    # de 3 pour la Forte, et proche de 0 pour la Faible. L'a priori (un match
+    # fictif a la moyenne) les retient un peu, sans les ecraser : c'est ce que
+    # l'apprentissage en ligne ne savait pas faire.
+    check("le lambda dominant approche le score reel",
+          2.5 < lam_dom <= 3.0, True)
+    check("le lambda domine approche zero", lam_ext < 0.3, True)
+
+    # Trois equipes, aller et retour, tous les matchs a 1-1. Personne n'est
+    # meilleur ni avantage par le terrain : les notes doivent etre egales, et
+    # la moyenne de reference celle du corpus, un but par equipe.
+    cercle = []
+    for j, (dom, ext) in enumerate(
+        [("P", "Q"), ("Q", "R"), ("R", "P"), ("Q", "P"), ("R", "Q"), ("P", "R")] * 4
+    ):
+        cercle.append({"kickoff_utc": "2026-02-%02d" % (j + 1), "domicile": dom,
+                       "exterieur": ext, "buts_domicile": 1, "buts_exterieur": 1})
+    egales = forces.construire(cercle, "buts_domicile", "buts_exterieur")
+    check("forces egales, attaques egales",
+          max(egales.attaque.values()) - min(egales.attaque.values()) < 1e-6, True)
+    check("la moyenne de reference est celle du corpus",
+          round(math.exp(egales.base + egales.attaque["P"]), 4), 1.0)
+
+    # L'oubli : un vieux match pese moins qu'un recent. La meme equipe gagne
+    # 4-0 il y a deux ans puis perd 0-4 hier ; sa note doit pencher vers hier.
+    oubli = [
+        {"kickoff_utc": "2024-03-01", "domicile": "U", "exterieur": "V",
+         "buts_domicile": 4, "buts_exterieur": 0},
+        {"kickoff_utc": "2026-03-01", "domicile": "U", "exterieur": "V",
+         "buts_domicile": 0, "buts_exterieur": 4},
+    ]
+    recente = forces.construire(oubli, "buts_domicile", "buts_exterieur")
+    check("un vieux match pese moins qu'un recent",
+          recente.attaque["V"] > recente.attaque["U"], True)
+    sans_oubli = forces.construire(
+        oubli, "buts_domicile", "buts_exterieur", oubli=0.0
+    )
+    check("sans oubli, les deux matchs se compensent",
+          abs(sans_oubli.attaque["U"] - sans_oubli.attaque["V"]) < 1e-6, True)
+
+    # Une cible absente (xG non releve) ne deplace aucune note, et le match ne
+    # compte pas : des notes de xG ne s'etablissent que sur des xG.
+    sans_cible = forces.construire(
+        [{"kickoff_utc": "2026-01-01", "domicile": "S", "exterieur": "T",
+          "buts_domicile": 2, "buts_exterieur": 1}],
+        "xg_domicile", "xg_exterieur",
+    )
+    check("sans cible, aucune note", sans_cible.attaque, {})
+    check("et le match n'etablit rien", sans_cible.joues, {})
 
     paquet_forces = {
         "base": 0.34, "avantage": 0.10,
@@ -2488,6 +2529,76 @@ def main() -> int:
     check("repli sur les buts sans xG",
           tuple(round(x, 6) for x in forces.lambdas_attendus("M", "N", sans_xg)),
           tuple(round(x, 6) for x in jeu_buts))
+
+    # Le total est resserre vers la moyenne de la competition, l'ecart garde.
+    # Nom normalise : le suffixe de phase du flux du jour ne doit pas perdre la
+    # moyenne.
+    resserre = dict(sans_xg, total_moyen=2.5, totaux={"Ligue Test": 2.0})
+    brut = sum(jeu_buts)
+    lam_r = forces.lambdas_attendus("M", "N", resserre, "Ligue Test - Cloture")
+    check("total resserre vers la competition",
+          round(sum(lam_r), 6),
+          round(2.0 + forces.RESSERREMENT_TOTAL * (brut - 2.0), 6))
+    check("l'ecart n'est pas resserre",
+          round(lam_r[0] - lam_r[1], 6), round(jeu_buts[0] - jeu_buts[1], 6))
+    lam_g = forces.lambdas_attendus("M", "N", resserre, "Inconnue")
+    check("competition inconnue -> moyenne globale",
+          round(sum(lam_g), 6),
+          round(2.5 + forces.RESSERREMENT_TOTAL * (brut - 2.5), 6))
+    globale, par_competition = forces.totaux_par_competition([
+        {"competition": "Ligue Test - Aller", "buts_domicile": 3, "buts_exterieur": 1},
+        {"competition": "Autre", "buts_domicile": 0, "buts_exterieur": 0},
+    ])
+    check("moyenne globale des buts", globale, 2.0)
+    check("moyenne de competition tiree vers la globale",
+          round(par_competition["Ligue Test"], 6),
+          round((4 + forces.TOTAL_A_PRIORI * 2.0) / (1 + forces.TOTAL_A_PRIORI), 6))
+
+    print("\nZ1b. Issue combinee aux cotes du marche")
+    from modeles import buts as modele_buts
+
+    marche_p = predict.probabilites_du_marche(
+        {"domicile": 1.40, "nul": 4.80, "exterieur": 8.00}
+    )
+    check("probabilites du marche sommees a 1",
+          round(sum(marche_p.values()), 6), 1.0)
+    check("cotes incompletes -> pas de marche",
+          predict.probabilites_du_marche({"domicile": 1.40}), None)
+    check("sans cotes -> pas de marche", predict.probabilites_du_marche(None), None)
+
+    lam = (1.3, 1.2)
+    modele_b = modele_buts.ModeleButs()
+    intact = modele_b.caler(lam, {"marche": None}, 0.0, 1.173, 1.173)
+    check("sans cotes, rien n'est releve", intact, (1.3, 1.2, None))
+    lh, la, trace = modele_b.caler(lam, {"marche": marche_p}, 0.0, 1.173, 1.173)
+    check("les nombres attendus ne bougent pas", (lh, la), lam)
+
+    # La fiche complete : issue combinee, nombres de buts intacts.
+    estimation_b = {"lambda": lam, "effectif_efficace": (10.0, 10.0),
+                    "matchs_utilises": (10, 10), "matchs_corriges": (0, 0),
+                    "methode": "test", "restreint_competition": False}
+    seule = modele_b.prevoir(estimation_b, ("A", "B"), None, predict.DEFAULT_PARAMS)
+    combinee = modele_b.prevoir(estimation_b, ("A", "B"), None, predict.DEFAULT_PARAMS,
+                                apports={"marche": marche_p})
+    w = modele_buts.POIDS_MODELE_ISSUE
+    attendu = {k: w * seule["resultat"][k] + (1 - w) * marche_p[k] for k in marche_p}
+    check("issue = melange modele / bookmaker",
+          {k: round(v, 6) for k, v in combinee["resultat"].items()},
+          {k: round(v, 6) for k, v in attendu.items()})
+    check("somme de l'issue combinee",
+          round(sum(combinee["resultat"].values()), 6), 1.0)
+    check("les seuils de buts ne changent pas",
+          combinee["echelles"]["total"], seule["echelles"]["total"])
+    check("la trace garde l'issue du modele seul",
+          combinee["marche"]["issue_modele"]["domicile"],
+          round(seule["resultat"]["domicile"], 4))
+    victoire = next(o for o in modele_b.issue.candidats(
+        ("A", "B"), combinee["resultat"], 0.5) if o["libelle"] == "Victoire A")
+    check("les propositions d'issue suivent le melange",
+          round(victoire["p"], 6), round(attendu["domicile"], 6))
+    check("sans cotes, fiche identique a la version sans marche",
+          modele_b.prevoir(estimation_b, ("A", "B"), None, predict.DEFAULT_PARAMS,
+                           apports={"marche": None})["resultat"], seule["resultat"])
 
     print("\nZ2. Notes attaque / defense dans le modele")
     # Sans notes, le modele est rendu intact : une prevision n'est jamais
@@ -2621,6 +2732,147 @@ def main() -> int:
                 "DELETE FROM resultats WHERE match_id LIKE ?", (TEMOIN + "%",)
             )
     check("les temoins sont retires", store.resultat(TEMOIN), None)
+
+    print("\nZ5. Versions des modeles et journal")
+    import re
+    import etude
+    import modeles
+
+    versions = modeles.versions()
+    check("chaque modele a une version",
+          sorted(versions),
+          sorted(["moteur", "issue"] + [m.cle for m in modeles.MODELES + modeles.AUXILIAIRES]))
+    check("versions au format MAJEURE.MINEURE.CORRECTIF",
+          all(re.fullmatch(r"\d+\.\d+\.\d+", v) for v in versions.values()), True)
+    # Une version en service sans section dans son journal est une version
+    # qu'on ne saura pas relire : le test l'interdit.
+    non_documentees = []
+    for cle, version in versions.items():
+        chemin = modeles.JOURNAL / ("%s.md" % cle)
+        texte = chemin.read_text(encoding="utf-8") if chemin.exists() else ""
+        if not re.search(r"^## %s\b" % re.escape(version), texte, re.MULTILINE):
+            non_documentees.append("%s %s" % (cle, version))
+    check("chaque version en service est documentee", non_documentees, [])
+    check("les versions sont inscrites dans la fiche",
+          predict.build({"championnat": "Liga", "statut": "A venir"},
+                        fiche_form, full)["versions"], versions)
+    check("l'issue est attribuee a son modele",
+          etude.modele_de("Buts", "double chance"), "issue")
+    check("les seuils restent au modele de la grandeur",
+          etude.modele_de("Corners", "total"), "corners")
+
+    print("\nZ6. Cartons 2.0.0 : feuille de match et discipline")
+    from api_client import FS_BLOCK, FS_FIELD, FS_KV, _fs_parse_incidents, _temps_de_jeu
+    from modeles.cartons import ModeleCartonsJaunes
+    from modeles.discipline import Discipline, groupe_de_poste
+
+    def _bloc_fs(*paires: tuple[str, str]) -> str:
+        return FS_FIELD.join("%s%s%s" % (k, FS_KV, v) for k, v in paires) + FS_FIELD
+
+    # Un changement porte deux incidents dans le meme bloc ; le flux annonce
+    # "entrant" le titulaire qui sort. Le sens doit se deduire de l'onze.
+    fil = FS_BLOCK.join([
+        _bloc_fs(("III", "a"), ("IA", "1"), ("IB", "65'"),
+                 ("IE", "6"), ("IF", "Titulaire T."), ("IK", "Changement - Entrant"), ("IM", "t1"),
+                 ("IE", "7"), ("IF", "Remplacant R."), ("IK", "Changement - Sortant"), ("IM", "r1")),
+        _bloc_fs(("III", "b"), ("IA", "1"), ("IB", "70'"),
+                 ("IE", "1"), ("IF", "Remplacant R."), ("IK", "Carton Jaune"), ("IM", "r1")),
+        _bloc_fs(("III", "c"), ("IA", "2"), ("IB", "90+3'"),
+                 ("IE", "2"), ("IF", "Autre A."), ("IK", "Carton Rouge"), ("IM", "x1")),
+    ])
+    incidents = _fs_parse_incidents(fil)
+    check("incidents : un changement et deux cartons",
+          sorted(i["type"] for i in incidents), ["changement", "changement", "jaune", "rouge"])
+    check("temps additionnel ramene a sa periode",
+          [i["minute"] for i in incidents if i["type"] == "rouge"], [90])
+    onze = {"onze": [{"joueur": "Titulaire T.", "id": "t1", "place": 6}] +
+            [{"joueur": "J%d" % k, "id": "j%d" % k, "place": k} for k in range(1, 6)],
+            "banc": [{"joueur": "Remplacant R.", "id": "r1"}]}
+    joues = {j["id"]: j for j in _temps_de_jeu(onze, "domicile", incidents)}
+    check("le titulaire sort malgre le libelle 'entrant'", joues["t1"]["minutes"], 65)
+    check("le remplacant entre et joue 25 minutes", joues["r1"]["minutes"], 25)
+    check("le remplacant herite du poste", joues["r1"]["place"], 6)
+
+    check("poste : gardien", groupe_de_poste(1, "1-4-2-3-1"), "G")
+    check("poste : defenseur", groupe_de_poste(4, "1-4-2-3-1"), "D")
+    check("poste : milieu", groupe_de_poste(8, "1-4-2-3-1"), "M")
+    check("poste : attaquant", groupe_de_poste(11, "1-4-2-3-1"), "A")
+
+    def _feuille(date, arbitre, jd, je, dom="A", ext="B"):
+        return {"date": date, "competition": "L", "domicile": dom, "exterieur": ext,
+                "arbitre": arbitre, "feuille": {"arbitre": arbitre, "cartons": []},
+                "stats": {"domicile": {"cartons_jaunes": jd}, "exterieur": {"cartons_jaunes": je}}}
+
+    # Equipes toutes differentes : sinon l'historique des equipes absorberait
+    # l'arbitre, ce qui est voulu -- l'attendu d'un arbitre est celui des
+    # equipes qu'il a eues.
+    index = Discipline().alimenter(
+        [_feuille("2026-01-%02d" % k, "Severe S.", 4, 4, "S%d" % k, "T%d" % k) for k in range(1, 21)]
+        + [_feuille("2026-01-%02d" % k, "Doux D.", 1, 1, "D%d" % k, "E%d" % k) for k in range(1, 21)]
+    )
+    severe = index.arbitre("Severe S.", "2026-03-01")
+    check("un arbitre severe a un rapport > 1", severe["rapport"] > 1.0, True)
+    check("un arbitre doux a un rapport < 1", index.arbitre("Doux D.", "2026-03-01")["rapport"] < 1.0, True)
+    check("aucune fuite : avant son premier match, l'arbitre est inconnu",
+          index.arbitre("Severe S.", "2026-01-01")["matchs"], 0)
+    inconnu = index.arbitre("Personne P.", "2026-03-01")
+    check("arbitre inconnu : rapport neutre", inconnu["rapport"], 1.0)
+    check("arbitre inconnu : plus incertain qu'un arbitre vu vingt fois",
+          inconnu["variance"] > severe["variance"] / severe["rapport"] ** 2, True)
+
+    cartons = ModeleCartonsJaunes()
+    check("sans apport, les cartons 2.0.0 valent le 1.0.0",
+          cartons.ajuster((2.0, 2.5), None)[:2], (2.0, 2.5))
+    lam = cartons.ajuster((2.0, 2.5), {"arbitre": {"rapport": 1.2, "variance": 0.01}})
+    check("l'arbitre deplace les deux cotes dans le meme sens",
+          (round(lam[0], 3), round(lam[1], 3)),
+          (round(2.0 * 1.2 ** cartons.poids_arbitre, 3), round(2.5 * 1.2 ** cartons.poids_arbitre, 3)))
+    check("un arbitre inconnu elargit la correlation du total",
+          cartons.correlation_du_match(2.0, 2.5, {"arbitre": {"rapport": 1.0, "variance": 0.08}})
+          >= cartons.correlation, True)
+
+    print("\nZ7. Styles des joueurs : profils et onze du jour")
+    from modeles import styles as st
+
+    def _joueur(jid: str, poste: str, stats: dict, titulaire: bool = True) -> dict:
+        return {"id": jid, "nom": jid, "poste": poste, "titulaire": titulaire,
+                "minutes": 90, "stats": dict(stats, minutes=90)}
+
+    def _match_styles(jour: int, centreur: str) -> dict:
+        onze = [_joueur("g", "G", {})] + [
+            _joueur("d%d" % k, "D", {"centres": 1}) for k in range(1, 5)
+        ] + [_joueur("m%d" % k, "M", {"centres": 1, "tirs": 1}) for k in range(1, 6)]
+        onze.append(_joueur(centreur, "A", {"centres": 12 if centreur == "ailier" else 1, "tirs": 2}))
+        adverse = [_joueur("x%d" % k, "M", {"centres": 1}) for k in range(11)]
+        return {"date": "2026-01-%02d" % jour, "domicile": "Club", "exterieur": "Adv%d" % jour,
+                "joueurs": {"domicile": onze, "exterieur": adverse}}
+
+    index = st.Styles().alimenter(
+        [_match_styles(k, "ailier") for k in range(1, 11)]
+        + [_match_styles(k, "pivot") for k in range(11, 13)]
+    )
+    ailier = index.profil("ailier", "2026-02-01")
+    check("un centreur a un taux de centres eleve", ailier["par_90"]["centres"] > 5.0, True)
+    check("aucune fuite : avant son premier match, le joueur est inconnu",
+          index.profil("ailier", "2026-01-01")["matchs"], 0)
+    peu_vu = index.profil("pivot", "2026-02-01")
+    check("un joueur peu vu reste pres de son poste",
+          peu_vu["par_90"]["centres"] > 1.0, True)
+    sans_ailier = [j for j in index.onze_habituel("Club", "2026-02-01") if j != "ailier"] + ["pivot"]
+    avec = index.facteur("Club", index.onze_habituel("Club", "2026-01-11"), "2026-02-01", "corners")
+    sans = index.facteur("Club", sans_ailier[:11], "2026-02-01", "corners")
+    check("sans son centreur, l'equipe fabrique moins de corners", sans["facteur"] < avec["facteur"], True)
+    check("equipe inconnue : facteur neutre",
+          index.facteur("Personne", None, "2026-02-01", "corners")["facteur"], 1.0)
+    from modeles import CORNERS, TIRS_CADRES
+    check("a poids nul, les styles ne deplacent rien",
+          st.appliquer((5.0, 4.0), {"domicile": {"facteur": 1.2}, "exterieur": {"facteur": 0.8}}, 0.0)[:2],
+          (5.0, 4.0))
+    check("le facteur est borne", st.appliquer((5.0, 4.0), {"domicile": {"facteur": 3.0}}, 1.0)[0],
+          5.0 * st.BORNE)
+    check("sans apport, corners et tirs cadres inchanges",
+          (CORNERS.ajuster((5.0, 4.0), None)[:2], TIRS_CADRES.ajuster((4.0, 3.0), None)[:2]),
+          ((5.0, 4.0), (4.0, 3.0)))
 
     print()
     if failures:

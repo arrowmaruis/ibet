@@ -552,7 +552,8 @@ def build_predictions(
             match["prediction"] = predict.build(
                 match, match["form"], baseline, collecte=collecte,
                 lambdas_forces=forces.lambdas_attendus(
-                    match.get("domicile", ""), match.get("exterieur", "")
+                    match.get("domicile", ""), match.get("exterieur", ""),
+                    competition=match.get("championnat", ""),
                 ),
             )
         except predict.NotEnoughData as exc:

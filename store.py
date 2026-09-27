@@ -105,6 +105,57 @@ CREATE TABLE IF NOT EXISTS resultats (
     stats             TEXT NOT NULL DEFAULT '{}'
 );
 
+-- Feuille de match d'un resultat archive : arbitre, entraineurs, temps de jeu
+-- et cartons par joueur (`api_client.feuille_de_match`). Table a part plutot
+-- que dans `resultats.stats` : un nouvel archivage du meme match reecrit ce
+-- blob et effacerait la feuille. `date` et `competition` la rendent lisible
+-- sans le cache, et donc rejouable avec coupure temporelle.
+CREATE TABLE IF NOT EXISTS feuilles (
+    match_id     TEXT PRIMARY KEY,
+    releve_le    TEXT NOT NULL,
+    date         TEXT NOT NULL DEFAULT '',
+    competition  TEXT NOT NULL DEFAULT '',
+    domicile     TEXT NOT NULL DEFAULT '',
+    exterieur    TEXT NOT NULL DEFAULT '',
+    arbitre      TEXT NOT NULL DEFAULT '',
+    feuille      TEXT NOT NULL DEFAULT '{}'
+);
+
+-- Statistiques par joueur des matchs des championnats suivis
+-- (`api_client.stats_joueurs`) : la matiere des profils de style
+-- (`modeles/styles.py`). Une ligne par joueur et par match ; `stats` ne porte
+-- que les grandeurs non nulles. `matchs_joueurs` dit quels matchs ont ete
+-- releves -- y compris ceux que le fournisseur ne couvre pas (`couvert` = 0),
+-- pour ne pas les redemander a chaque passage.
+CREATE TABLE IF NOT EXISTS matchs_joueurs (
+    match_id      TEXT PRIMARY KEY,
+    releve_le     TEXT NOT NULL,
+    date          TEXT NOT NULL DEFAULT '',
+    championnat   TEXT NOT NULL DEFAULT '',
+    saison        TEXT NOT NULL DEFAULT '',
+    domicile      TEXT NOT NULL DEFAULT '',
+    exterieur     TEXT NOT NULL DEFAULT '',
+    couvert       INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS stats_joueurs (
+    match_id      TEXT NOT NULL,
+    joueur_id     TEXT NOT NULL,
+    cote          TEXT NOT NULL,
+    equipe        TEXT NOT NULL DEFAULT '',
+    nom           TEXT NOT NULL DEFAULT '',
+    poste         TEXT NOT NULL DEFAULT '?',
+    poste_libelle TEXT NOT NULL DEFAULT '',
+    titulaire     INTEGER NOT NULL DEFAULT 0,
+    minutes       REAL NOT NULL DEFAULT 0,
+    stats         TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (match_id, joueur_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stats_joueurs_joueur ON stats_joueurs(joueur_id);
+CREATE INDEX IF NOT EXISTS idx_stats_joueurs_equipe ON stats_joueurs(equipe);
+CREATE INDEX IF NOT EXISTS idx_matchs_joueurs_date ON matchs_joueurs(championnat, date);
+CREATE INDEX IF NOT EXISTS idx_feuilles_arbitre ON feuilles(arbitre, date);
 CREATE INDEX IF NOT EXISTS idx_offres_prediction ON offres(prediction_id);
 CREATE INDEX IF NOT EXISTS idx_predictions_coup_denvoi ON predictions(coup_denvoi_local);
 CREATE INDEX IF NOT EXISTS idx_cotes_match ON cotes(match_id, releve_le);
@@ -353,6 +404,172 @@ def completer_stats(match_id: str, stats: dict[str, Any]) -> bool:
             (json.dumps(stats, ensure_ascii=False), match_id),
         )
     return curseur.rowcount > 0
+
+
+def archiver_feuille(
+    match_id: str,
+    feuille: dict[str, Any],
+    date: str = "",
+    competition: str = "",
+    domicile: str = "",
+    exterieur: str = "",
+    connexion: sqlite3.Connection | None = None,
+) -> bool:
+    """Garde la feuille de match d'un resultat. Une feuille vide n'est pas ecrite :
+    elle empecherait la vraie de s'ecrire au prochain passage."""
+    if not match_id or not feuille:
+        return False
+    ligne = (
+        match_id,
+        datetime.now().astimezone().isoformat(timespec="seconds"),
+        date or "",
+        competition or "",
+        domicile or "",
+        exterieur or "",
+        (feuille.get("arbitre") or "").strip(),
+        json.dumps(feuille, ensure_ascii=False),
+    )
+    requete = """
+        INSERT OR REPLACE INTO feuilles
+            (match_id, releve_le, date, competition, domicile, exterieur,
+             arbitre, feuille)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    if connexion is not None:
+        connexion.execute(requete, ligne)
+        return True
+    with connect() as connection:
+        connection.execute(requete, ligne)
+    return True
+
+
+def feuilles_connues() -> set[str]:
+    """Identifiants des matchs dont la feuille est deja archivee."""
+    with connect() as connection:
+        return {r[0] for r in connection.execute("SELECT match_id FROM feuilles")}
+
+
+def archiver_stats_joueurs(
+    match: dict[str, Any],
+    joueurs: dict[str, Any],
+    championnat: str,
+    saison: str,
+    connexion: sqlite3.Connection,
+) -> int:
+    """Garde les statistiques par joueur d'un match. Rend le nombre de joueurs.
+
+    Un match que le fournisseur ne couvre pas (`joueurs` vide) est tout de meme
+    note, `couvert` a zero : le redemander a chaque passage ne le ferait pas
+    apparaitre.
+    """
+    match_id = match.get("match_id") or ""
+    if not match_id:
+        return 0
+    equipes = {"domicile": match.get("domicile") or "", "exterieur": match.get("exterieur") or ""}
+    n = 0
+    for cote in ("domicile", "exterieur"):
+        for j in (joueurs or {}).get(cote) or []:
+            stats = j.get("stats") or {}
+            connexion.execute(
+                """INSERT OR REPLACE INTO stats_joueurs
+                   (match_id, joueur_id, cote, equipe, nom, poste, poste_libelle,
+                    titulaire, minutes, stats)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (match_id, j.get("id") or "", cote, equipes[cote], j.get("nom") or "",
+                 j.get("poste") or "?", j.get("poste_libelle") or "",
+                 1 if j.get("titulaire") else 0, float(stats.get("minutes") or 0),
+                 json.dumps(stats, ensure_ascii=False)),
+            )
+            n += 1
+    connexion.execute(
+        """INSERT OR REPLACE INTO matchs_joueurs
+           (match_id, releve_le, date, championnat, saison, domicile, exterieur, couvert)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (match_id, datetime.now().astimezone().isoformat(timespec="seconds"),
+         match.get("date") or "", championnat, saison, equipes["domicile"],
+         equipes["exterieur"], 1 if n else 0),
+    )
+    return n
+
+
+def matchs_joueurs_connus() -> set[str]:
+    with connect() as connection:
+        return {r[0] for r in connection.execute("SELECT match_id FROM matchs_joueurs")}
+
+
+def stats_joueurs_archivees(championnat: str = "") -> list[dict[str, Any]]:
+    """Matchs couverts avec leurs joueurs et les stats d'equipe archivees,
+    des plus anciens aux plus recents. Un element par match :
+
+        {"match_id", "date", "championnat", "saison", "domicile", "exterieur",
+         "stats": <resultats.stats>, "joueurs": {"domicile": [...], "exterieur": [...]}}
+    """
+    requete = """
+        SELECT m.match_id, m.date, m.championnat, m.saison, m.domicile, m.exterieur,
+               r.stats AS stats_match
+        FROM matchs_joueurs m LEFT JOIN resultats r ON r.match_id = m.match_id
+        WHERE m.couvert = 1
+    """
+    parametres: tuple[Any, ...] = ()
+    if championnat:
+        requete += " AND m.championnat = ?"
+        parametres = (championnat,)
+    requete += " ORDER BY m.date, m.match_id"
+    with connect() as connection:
+        matchs = {
+            l["match_id"]: {
+                "match_id": l["match_id"], "date": l["date"],
+                "championnat": l["championnat"], "saison": l["saison"],
+                "domicile": l["domicile"], "exterieur": l["exterieur"],
+                "stats": json.loads(l["stats_match"] or "{}"),
+                "joueurs": {"domicile": [], "exterieur": []},
+            }
+            for l in connection.execute(requete, parametres)
+        }
+        for l in connection.execute(
+            "SELECT match_id, joueur_id, cote, nom, poste, poste_libelle, titulaire, "
+            "minutes, stats FROM stats_joueurs"
+        ):
+            m = matchs.get(l["match_id"])
+            if m is None:
+                continue
+            m["joueurs"][l["cote"]].append({
+                "id": l["joueur_id"], "nom": l["nom"], "poste": l["poste"],
+                "poste_libelle": l["poste_libelle"], "titulaire": bool(l["titulaire"]),
+                "minutes": l["minutes"], "stats": json.loads(l["stats"] or "{}"),
+            })
+    return list(matchs.values())
+
+
+def feuilles(avant: str = "") -> list[dict[str, Any]]:
+    """Feuilles archivees jointes a leurs statistiques, des plus anciennes aux
+    plus recentes. `avant` (AAAA-MM-JJ) coupe strictement : une prevision ne
+    doit jamais lire le match qu'elle prevoit, ni ceux qui le suivent."""
+    requete = """
+        SELECT f.match_id, f.date, f.competition, f.domicile, f.exterieur,
+               f.arbitre, f.feuille, r.stats
+        FROM feuilles f LEFT JOIN resultats r ON r.match_id = f.match_id
+    """
+    parametres: tuple[Any, ...] = ()
+    if avant:
+        requete += " WHERE f.date != '' AND f.date < ?"
+        parametres = (avant,)
+    requete += " ORDER BY f.date, f.match_id"
+    with connect() as connection:
+        lignes = connection.execute(requete, parametres).fetchall()
+    return [
+        {
+            "match_id": l["match_id"],
+            "date": l["date"],
+            "competition": l["competition"],
+            "domicile": l["domicile"],
+            "exterieur": l["exterieur"],
+            "arbitre": l["arbitre"],
+            "feuille": json.loads(l["feuille"] or "{}"),
+            "stats": json.loads(l["stats"] or "{}"),
+        }
+        for l in lignes
+    ]
 
 
 def resultats_archives() -> int:

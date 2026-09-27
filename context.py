@@ -146,6 +146,9 @@ class Poids(NamedTuple):
     # liste des absents et l'arbitre de ce jour-la. Quelques dizaines de fiches
     # verifiees suffiront. En attendant, `POIDS_CONTEXTE` permet de les essayer.
     effectif: float = 0.0
+    # L'arbitre est desormais DANS le modele des cartons (2.0.0, profil tire des
+    # feuilles de match archivees). Le critere 12 reste affiche, mais le
+    # remonter ici compterait l'arbitre deux fois : il doit rester a zero.
     arbitre: float = 0.0
     motivation: float = 0.0
     # Aucun match couperet dans l'echantillon : le critere n'a rien deplace, et
@@ -1924,6 +1927,118 @@ def _critere_arbitre(
 
 
 # ---------------------------------------------------------------------------
+# Discipline : apport du modele des cartons 2.0.0
+# ---------------------------------------------------------------------------
+
+# Index des feuilles de match, un par date de coupure : le construire lit toute
+# la table `feuilles` (quelques milliers de lignes), ce qu'une journee de
+# fiches ne doit faire qu'une fois.
+_INDEX_DISCIPLINE: dict[str, Any] = {}
+
+# Matchs a partir desquels un entraineur est considere comme installe : son
+# systeme est alors dans l'historique de l'equipe.
+INSTALLATION_ENTRAINEUR = 8
+
+
+def _index_discipline(date: str):
+    from modeles.discipline import Discipline
+    import store
+
+    if date not in _INDEX_DISCIPLINE:
+        _INDEX_DISCIPLINE.clear()
+        try:
+            _INDEX_DISCIPLINE[date] = Discipline().alimenter(store.feuilles(avant=date))
+        except Exception:  # noqa: BLE001 - une archive illisible vaut neutre
+            _INDEX_DISCIPLINE[date] = Discipline()
+    return _INDEX_DISCIPLINE[date]
+
+
+def discipline_du_match(
+    match: dict[str, Any],
+    teams: tuple[str, str],
+    arbitre: str,
+    compositions: dict[str, Any],
+    arbitre_pays: str = "",
+) -> dict[str, Any]:
+    """Arbitre, onze aligne et entraineur, tels que les feuilles passees les voient.
+
+    C'est l'apport que recoit le modele des cartons (`ModeleCartonsJaunes.
+    ajuster`). Chaque volet se degrade seul : arbitre pas encore designe
+    (rapport 1, mais sa variance elargit le total), composition pas encore
+    publiee (facteur 1 : l'onze habituel est celui de l'historique),
+    entraineur inconnu (facteur 1).
+    """
+    date = (match.get("kickoff_utc") or match.get("date") or "")[:10]
+    if not date:
+        date = datetime.now(timezone.utc).date().isoformat()
+    from modeles.discipline import cle_arbitre
+
+    index = _index_discipline(date)
+    rendu: dict[str, Any] = {
+        "arbitre": dict(index.arbitre(cle_arbitre(arbitre, arbitre_pays), date), arbitre=arbitre)
+    }
+    for cote, equipe in zip(("domicile", "exterieur"), teams):
+        bloc = (compositions or {}).get(cote) or {}
+        titulaires = [j for j in bloc.get("onze") or [] if j.get("id")]
+        joueurs = index.facteur_joueurs(equipe, titulaires, bloc.get("systeme") or "", date)
+        coach = (bloc.get("entraineur") or {}).get("id") or index.entraineur_en_poste(equipe).get("id", "")
+        entraineur = index.facteur_entraineur(equipe, coach, date, INSTALLATION_ENTRAINEUR)
+        entraineur["nom"] = (bloc.get("entraineur") or {}).get("nom") or index.entraineur_en_poste(equipe).get("nom", "")
+        rendu[cote] = {"joueurs": joueurs, "entraineur": entraineur}
+    return rendu
+
+
+# ---------------------------------------------------------------------------
+# Styles des joueurs : apport des modeles des corners et des tirs cadres
+# ---------------------------------------------------------------------------
+
+# Index des statistiques par joueur, un par date de coupure (meme raison que
+# celui de la discipline).
+_INDEX_STYLES: dict[str, Any] = {}
+
+
+def _index_styles(date: str):
+    from modeles.styles import Styles
+    import store
+
+    if date not in _INDEX_STYLES:
+        _INDEX_STYLES.clear()
+        try:
+            matchs = [m for m in store.stats_joueurs_archivees() if (m.get("date") or "") < date]
+            _INDEX_STYLES[date] = Styles().alimenter(matchs)
+        except Exception:  # noqa: BLE001 - une archive illisible vaut neutre
+            _INDEX_STYLES[date] = Styles()
+    return _INDEX_STYLES[date]
+
+
+def styles_du_match(
+    match: dict[str, Any], teams: tuple[str, str], compositions: dict[str, Any]
+) -> dict[str, Any]:
+    """Ce que les onze du jour changent aux corners et aux tirs cadres.
+
+    Par grandeur et par cote, le facteur de `modeles.styles` : volume de
+    l'onze (aligne s'il est publie, habituel sinon) sur volume des onzes que
+    l'historique de l'equipe reflete. Facteur 1 pour une equipe hors des
+    championnats releves, ou trop peu vue.
+
+        {"corners": {"domicile": {...}, "exterieur": {...}},
+         "tirs_cadres": {...}}
+    """
+    date = (match.get("kickoff_utc") or match.get("date") or "")[:10]
+    if not date:
+        date = datetime.now(timezone.utc).date().isoformat()
+    index = _index_styles(date)
+    rendu: dict[str, Any] = {}
+    for grandeur in ("corners", "tirs_cadres"):
+        rendu[grandeur] = {}
+        for cote, equipe in zip(("domicile", "exterieur"), teams):
+            bloc = (compositions or {}).get(cote) or {}
+            onze = [j.get("id") for j in bloc.get("onze") or [] if j.get("id")]
+            rendu[grandeur][cote] = index.facteur(equipe, onze, date, grandeur)
+    return rendu
+
+
+# ---------------------------------------------------------------------------
 # Critere 13 : cotes du marche et mouvements de lignes
 # ---------------------------------------------------------------------------
 
@@ -2340,6 +2455,13 @@ def collecter(
     return {
         "criteres": criteres,
         "poids_entrees": poids_entrees,
+        # L'apport du modele des cartons. En retrospectif, l'arbitre est coupe
+        # comme pour le critere 12 : seul son inconnu (la variance) joue.
+        "discipline": discipline_du_match(
+            match, teams, arbitre, compositions, infos.get("arbitre_pays", "")
+        ),
+        # L'apport des corners et des tirs cadres : les styles des joueurs.
+        "styles": styles_du_match(match, teams, compositions),
         "poids": poids,
         "profils": profils,
         "confrontations": meetings,

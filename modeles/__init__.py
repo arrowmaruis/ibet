@@ -19,6 +19,11 @@ Ils partagent un socle qui ne connait aucun evenement :
     offres.py       -- selection des propositions et tableau des marches
     base.py         -- le contrat d'un modele d'evenement
 
+Chaque modele porte une `version`, et le moteur commun la sienne
+(`VERSION_MOTEUR`). Elles sont inscrites dans chaque fiche ; leur histoire --
+changements, points forts, points faibles, mesures -- est tenue dans
+`journal/`. Voir `journal/README.md` pour les regles.
+
 `predict.build` orchestre : chaque modele estime, le contexte s'intercale, puis
 chaque modele produit sa fiche. Pour ajouter un evenement, ecrire une
 sous-classe de `ModeleEvenement` (ou `ModeleParEquipe`) et l'inscrire dans
@@ -26,6 +31,8 @@ sous-classe de `ModeleEvenement` (ou `ModeleParEquipe`) et l'inscrire dans
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from .base import Metric, ModeleEvenement, ModeleParEquipe
 from .buts import ModeleButs
@@ -50,6 +57,26 @@ AUXILIAIRES: tuple[ModeleEvenement, ...] = (XG,)
 
 PAR_CLE: dict[str, ModeleEvenement] = {m.cle: m for m in MODELES + AUXILIAIRES}
 
+# Version du socle commun (estimation, lois, offres, reglages). Une prevision
+# depend de son modele ET du moteur : une amelioration du moteur change toutes
+# les grandeurs a la fois, et doit se lire comme telle dans les etudes.
+VERSION_MOTEUR = "1.0.0"
+
+# Journal des versions : un fichier Markdown par modele, plus un pour le moteur.
+JOURNAL = Path(__file__).parent / "journal"
+
+
+def versions() -> dict[str, str]:
+    """Versions en service, inscrites dans chaque fiche emise."""
+    rendu = {"moteur": VERSION_MOTEUR}
+    for m in MODELES:
+        rendu[m.cle] = m.version
+        if m is BUTS:
+            rendu[ISSUE.cle] = ISSUE.version
+    for m in AUXILIAIRES:
+        rendu[m.cle] = m.version
+    return rendu
+
 
 def modele(cle: str) -> ModeleEvenement:
     """Le modele d'une grandeur, par sa cle ("buts", "corners"...)."""
@@ -60,5 +87,6 @@ __all__ = [
     "AUXILIAIRES", "BUTS", "CARTONS_JAUNES", "CORNERS", "ISSUE", "MODELES",
     "Metric", "ModeleButs", "ModeleCartonsJaunes", "ModeleCorners",
     "ModeleEvenement", "ModeleIssue", "ModeleParEquipe", "ModeleTirsCadres",
-    "ModeleXG", "PAR_CLE", "TIRS_CADRES", "XG", "modele",
+    "ModeleXG", "PAR_CLE", "TIRS_CADRES", "VERSION_MOTEUR", "XG", "JOURNAL",
+    "modele", "versions",
 ]

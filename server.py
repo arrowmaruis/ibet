@@ -326,7 +326,11 @@ def get_odds(match_id: str) -> dict[str, Any]:
     buts = next(
         (g for g in prediction.get("grandeurs") or [] if g["cle"] == "buts"), None
     )
-    modele = (buts or {}).get("resultat")
+    # L'issue du modele seul quand la fiche l'a combinee aux cotes : le
+    # critere compare le modele au marche (voir `predict.build`).
+    modele = ((buts or {}).get("marche") or {}).get("issue_modele") or (
+        buts or {}
+    ).get("resultat")
     critere = context.critere_cotes(historique[-1]["cotes"], modele, historique)
     return {
         "match_id": match_id,

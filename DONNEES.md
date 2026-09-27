@@ -15,7 +15,7 @@ Trois dépôts, de natures très différentes — et c'est la distinction qui co
 | Dépôt | Volume | Nature | Reconstituable ? |
 |---|---|---|---|
 | `ibet.db` (SQLite) | **8,8 Mo** | ce qui fait foi | **non** pour l'essentiel |
-| `forces.json` | 500 Ko | état du modèle en ligne | oui, en rejouant l'archive |
+| `forces.json` | 500 Ko | notes attaque / défense et moyennes de buts par compétition | oui, `python forces.py` |
 | `.cache/` | 8 298 fichiers, 22,8 Mo utiles (**48 Mo occupés**) | copie de travail des sources | oui, en retéléchargeant |
 
 ### `ibet.db` — les cinq tables

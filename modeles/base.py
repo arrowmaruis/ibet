@@ -135,6 +135,12 @@ class ModeleEvenement:
     """
 
     cle: str = ""
+    # Version du modele, au format MAJEURE.MINEURE.CORRECTIF. Elle est inscrite
+    # dans chaque fiche emise : c'est elle qui permet de comparer, apres coup,
+    # ce que chaque version a reellement donne (`python etude.py`). Toute
+    # modification qui change une probabilite oblige a l'incrementer ET a
+    # documenter la nouvelle version dans `modeles/journal/<cle>.md`.
+    version: str = "0.0.0"
     libelle: str = ""
     champ: str | None = None
     seuil: float = 0.0
@@ -333,6 +339,21 @@ class ModeleEvenement:
         """
         return lam[0], lam[1], None
 
+    def caler(
+        self,
+        lam: tuple[float, float],
+        apports: dict[str, Any] | None,
+        rho: float,
+        phi_home: float,
+        phi_away: float,
+    ) -> tuple[float, float, dict[str, Any] | None]:
+        """Dernier calage des nombres attendus, contexte compris, et sa trace.
+
+        Appele APRES les corrections de contexte : ce qui est cale ici l'est sur
+        les nombres definitifs. Par defaut, rien ne change.
+        """
+        return lam[0], lam[1], None
+
     def completer(
         self,
         entry: dict[str, Any],
@@ -370,6 +391,9 @@ class ModeleEvenement:
         # rien ne change.
         phi_home = self.dispersion_effective(home_weight, params)
         phi_away = self.dispersion_effective(away_weight, params)
+        lam_home, lam_away, calage = self.caler(
+            (lam_home, lam_away), apports, rho, phi_home, phi_away
+        )
         phi_total = _blend(phi_home, phi_away, lam_home, lam_away)
 
         entry: dict[str, Any] = {
@@ -402,6 +426,8 @@ class ModeleEvenement:
                 "correction": correction,
                 "lambda_avant_contexte": (round(avant[0], 2), round(avant[1], 2)),
             }
+        if calage:
+            entry["marche"] = calage
         partenaires = self.completer(
             entry, teams, lam_home, lam_away, rho, phi_home, phi_away
         )

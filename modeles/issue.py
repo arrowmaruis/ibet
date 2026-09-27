@@ -90,6 +90,7 @@ class ModeleIssue:
     """Issue du match, tiree des nombres de buts attendus."""
 
     cle = "issue"
+    version = "1.1.0"
 
     def prevoir(
         self,

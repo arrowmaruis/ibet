@@ -22,16 +22,9 @@ echelle commune, construites sur les resultats reels et sur eux seuls.
         lambda_dom = exp(mu + h + attaque[dom] - defense[ext])
         lambda_ext = exp(mu     + attaque[ext] - defense[dom])
 
-    La litterature l'estime par maximum de vraisemblance sur une saison entiere.
-    Un systeme qui cote en continu ne le peut pas : il doit se mettre a jour
-    apres chaque match sans tout reestimer. Il emploie donc la descente de
-    gradient en ligne, dont la mise a jour pour une vraisemblance de Poisson est
-    d'une simplicite remarquable :
-
-        d log L / d attaque[dom] = buts_dom - lambda_dom
-
-    soit « on monte l'attaque quand l'equipe marque plus que prevu ». L'echelle
-    se construit ainsi toute seule, sans qu'on ait a declarer qu'un championnat
+    Les notes sont estimees au maximum de vraisemblance sur tout le corpus,
+    chaque match pondere par son anciennete (voir `construire`). L'echelle se
+    construit ainsi toute seule, sans qu'on ait a declarer qu'un championnat
     vaut plus qu'un autre : battre une equipe bien notee rapporte plus que
     battre une equipe faible.
 
@@ -42,15 +35,18 @@ echelle commune, construites sur les resultats reels et sur eux seuls.
     convertit. Voir `lambdas_attendus`.
 
   - **Rien n'est declare, tout est mesure.** La moyenne de reference, l'avantage
-    du terrain et le pas d'apprentissage sont estimes sur le corpus.
+    du terrain, l'oubli et l'a priori sont estimes ou regles sur le corpus.
 
 Mesure en walk-forward sur 5 360 matchs, chaque match prevu avec les notes
-d'AVANT lui :
+d'AVANT lui (premiere version, apprise en ligne) :
 
     forme recente seule      Brier 0.6196     <- ce que faisait le modele
     Elo (ecart seul)         Brier 0.6047     t = -4.8 contre la forme
     attaque / defense        Brier 0.5916     t = -11.7 contre la forme
     uniforme                 Brier 0.6667
+
+L'estimation au maximum de vraisemblance fait mieux encore que l'apprentissage
+en ligne ; ses mesures sont dans `construire`.
 
 Et, contrairement a Elo, elles ameliorent aussi le TOTAL : erreur absolue 1.396
 contre 1.437, t = -5.9. Elo ne savait que departager deux equipes ; il a donc
@@ -64,6 +60,7 @@ matchs de 2003 a aujourd'hui, sans une requete de plus.
 
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import pathlib
@@ -239,14 +236,25 @@ def _nombre(valeur: Any) -> float | None:
     return None
 
 
-#: Pas d'apprentissage. Regle par balayage : 0.01 -> 0.6083, 0.02 -> 0.5967,
-#: 0.04 -> 0.5916, 0.08 -> 0.5971. Minimum interieur net.
-PAS = 0.04
+#: Oubli des matchs anciens, par jour : poids exp(-OUBLI * age). 0.002 donne une
+#: demi-vie d'environ un an. Balayage en walk-forward (4 996 matchs de 2026,
+#: a priori 1 match) : 0 -> 0.5932, 0.002 -> 0.5924, 0.005 -> 0.5942.
+OUBLI = 0.002
 
-#: Bornes des notes, en logarithme. e^1.2 = 3.3 : aucune equipe ne marque plus
-#: de trois fois la moyenne, et sans borne une serie de matchs aberrants
-#: enverrait une note a l'infini.
-PLAFOND = 1.2
+#: A priori des notes : chaque equipe part de ce nombre de matchs fictifs joues
+#: exactement a la moyenne. C'est la regularisation qui empeche une equipe vue
+#: deux fois de recevoir une note extreme. 1 -> 0.5924, 3 -> 0.5937.
+A_PRIORI = 1.0
+
+#: Passes de l'estimation. Chaque passe resout exactement chaque note, les
+#: autres fixees ; huit suffisent a stabiliser le Brier au quatrieme chiffre.
+PASSES = 12
+
+#: Bornes des notes, en logarithme. e^2 = 7.4 : une borne de securite, que
+#: l'a priori rend presque toujours inactive -- l'ancienne, 1.2, avait ete
+#: choisie pour l'apprentissage en ligne et ecrasait les ecarts reels entre
+#: un grand club et un club de troisieme division.
+PLAFOND = 2.0
 
 
 #: Fichier des notes attaque / defense.
@@ -254,25 +262,22 @@ CHEMIN = pathlib.Path(__file__).parent / "forces.json"
 
 
 class Forces:
-    """Notes attaque / defense d'un ensemble d'equipes, mises a jour en ligne.
+    """Notes attaque / defense d'un ensemble d'equipes.
 
-    `cible` extrait du match ce que les notes doivent predire : les buts, ou les
-    xG. Les deux jeux de notes ne servent pas a la meme chose -- voir
-    `lambdas_attendus`.
+    Les deux jeux de notes -- buts et xG -- ne servent pas a la meme chose, voir
+    `lambdas_attendus`. Les notes sont estimees par `construire`.
     """
 
     def __init__(
         self,
         base: float,
         avantage: float,
-        pas: float = PAS,
         attaque: dict[str, float] | None = None,
         defense: dict[str, float] | None = None,
         joues: dict[str, int] | None = None,
     ) -> None:
         self.base = base
         self.avantage = avantage
-        self.pas = pas
         self.attaque: dict[str, float] = dict(attaque or {})
         self.defense: dict[str, float] = dict(defense or {})
         self.joues: dict[str, int] = dict(joues or {})
@@ -294,25 +299,6 @@ class Forces:
 
     def etablies(self, *equipes: str) -> bool:
         return all(self.joues.get(e, 0) >= MATCHS_MIN for e in equipes)
-
-    def apprendre(
-        self, domicile: str, exterieur: str, cible_dom: float | None,
-        cible_ext: float | None
-    ) -> None:
-        """Une passe de gradient sur un match, puis bornage des notes."""
-        if cible_dom is not None and cible_ext is not None:
-            lam_dom, lam_ext = self.lambdas(domicile, exterieur)
-            ecart_dom = cible_dom - lam_dom
-            ecart_ext = cible_ext - lam_ext
-            self.attaque[domicile] = self.attaque.get(domicile, 0.0) + self.pas * ecart_dom
-            self.defense[exterieur] = self.defense.get(exterieur, 0.0) - self.pas * ecart_dom
-            self.attaque[exterieur] = self.attaque.get(exterieur, 0.0) + self.pas * ecart_ext
-            self.defense[domicile] = self.defense.get(domicile, 0.0) - self.pas * ecart_ext
-            for table in (self.attaque, self.defense):
-                for nom in (domicile, exterieur):
-                    table[nom] = max(-PLAFOND, min(PLAFOND, table[nom]))
-        self.joues[domicile] = self.joues.get(domicile, 0) + 1
-        self.joues[exterieur] = self.joues.get(exterieur, 0) + 1
 
 
 #: Grandeurs de style : ce qu'une equipe produit, au-dela du score. Elles ne
@@ -385,36 +371,153 @@ def profils_de_style(matchs: Sequence[dict[str, Any]]) -> dict[str, dict[str, fl
     return profils
 
 
-def _reperes(matchs: Sequence[dict[str, Any]]) -> tuple[float, float]:
-    """Moyenne de reference et avantage du terrain, en logarithme."""
-    total = sum(m["buts_domicile"] + m["buts_exterieur"] for m in matchs)
-    a_domicile = sum(m["buts_domicile"] for m in matchs)
-    a_exterieur = sum(m["buts_exterieur"] for m in matchs)
-    if not matchs or total <= 0 or a_domicile <= 0 or a_exterieur <= 0:
-        return 0.0, 0.0
-    return (
-        math.log(total / (2 * len(matchs))),
-        0.5 * math.log(a_domicile / a_exterieur),
-    )
+def _jour(match: dict[str, Any]) -> int | None:
+    try:
+        return datetime.date.fromisoformat(
+            (match.get("kickoff_utc") or "")[:10]
+        ).toordinal()
+    except ValueError:
+        return None
 
 
 def construire(
-    matchs: Sequence[dict[str, Any]], cle_dom: str, cle_ext: str, pas: float = PAS
+    matchs: Sequence[dict[str, Any]],
+    cle_dom: str,
+    cle_ext: str,
+    oubli: float = OUBLI,
+    a_priori: float = A_PRIORI,
+    passes: int = PASSES,
 ) -> Forces:
-    """Notes attaque / defense, du plus ancien match au plus recent.
+    """Notes attaque / defense au maximum de vraisemblance, sur tout le corpus.
 
-    L'ordre chronologique est impose : une note est un etat qui se construit.
+    C'est l'estimation de Maher (1982) et Dixon & Coles (1997) : toutes les
+    notes a la fois, chaque match pondere par son anciennete. Elle remplace une
+    descente de gradient en ligne -- un pas de 0.04 par match --, qui ne
+    laissait pas aux notes le temps de s'ecarter de la moyenne : l'equipe
+    mediane du corpus n'a que 4 matchs, et meme les grands clubs restaient
+    tasses. PSG - Slovan Bratislava ressortait a 55 % pour Paris, le marche a
+    95 %.
+
+    Mesure, chaque match prevu avec les seules donnees d'avant lui :
+
+        4 996 matchs de 2026     en ligne Brier 0.6014   ici 0.5924   t = -4.8
+        67 fiches emises         en ligne Brier 0.5332   ici 0.4891
+                                 (marche 0.4581 ; favori juste 45 -> 49 / 67,
+                                 marche 50)
+
+    Les notes restent CALIBREES : un favori annonce a 64 % gagne 63 % du temps.
+    Le gain ne vient pas de probabilites plus tranchees, mais d'equipes mieux
+    departagees.
+
+    Chaque passe resout exactement chaque note, les autres fixees -- une
+    moyenne ponderee, sans pas a regler :
+
+        exp(attaque[i]) = (buts marques + a_priori) / (buts attendus + a_priori)
+
+    `a_priori` ajoute a chaque equipe des matchs fictifs joues a la moyenne ;
+    `oubli` fait peser un match d'il y a un an deux fois moins qu'un match
+    d'hier. La date de reference est celle du dernier match du corpus.
     """
-    base, avantage = _reperes(matchs)
-    forces = Forces(base, avantage, pas)
-    for match in sorted(matchs, key=lambda m: m.get("kickoff_utc") or ""):
+    lignes = []
+    jours = [j for j in (_jour(m) for m in matchs) if j is not None]
+    reference = max(jours) if jours else 0
+    joues: dict[str, int] = {}
+    for match in matchs:
         domicile, exterieur = match.get("domicile"), match.get("exterieur")
         if not domicile or not exterieur or domicile == exterieur:
             continue
-        forces.apprendre(
-            domicile, exterieur, match.get(cle_dom), match.get(cle_ext)
-        )
+        cible_dom, cible_ext = match.get(cle_dom), match.get(cle_ext)
+        if cible_dom is None or cible_ext is None:
+            # Un match sans xG ne dit rien des notes de xG : le compter ferait
+            # passer pour etablie une equipe dont aucun xG n'a ete releve.
+            continue
+        joues[domicile] = joues.get(domicile, 0) + 1
+        joues[exterieur] = joues.get(exterieur, 0) + 1
+        jour = _jour(match)
+        poids = math.exp(-oubli * (reference - jour)) if jour is not None else 1.0
+        lignes.append((domicile, exterieur, float(cible_dom), float(cible_ext), poids))
+
+    forces = Forces(0.0, 0.0, joues=joues)
+    marques_dom = sum(l[2] * l[4] for l in lignes)
+    marques_ext = sum(l[3] * l[4] for l in lignes)
+    if marques_dom + marques_ext <= 0:
+        return forces
+    # Sans but d'un des deux cotes, terrain et attaque ne se separent plus :
+    # le terrain reste neutre plutot que de partir a l'infini.
+    terrain_estimable = marques_dom > 0 and marques_ext > 0
+
+    # Notes multiplicatives pendant l'estimation : `offense` multiplie ce que
+    # l'equipe marque, `faille` ce qu'elle concede.
+    offense = {nom: 1.0 for nom in joues}
+    faille = {nom: 1.0 for nom in joues}
+    moyenne, terrain = 1.0, 1.0
+    for _ in range(passes):
+        attendus_dom = sum(l[4] * offense[l[0]] * faille[l[1]] for l in lignes)
+        attendus_ext = sum(l[4] * offense[l[1]] * faille[l[0]] for l in lignes)
+        moyenne = (marques_dom + marques_ext) / (terrain * attendus_dom + attendus_ext)
+        if terrain_estimable:
+            terrain = marques_dom / (moyenne * attendus_dom)
+        dom_fac, ext_fac = moyenne * terrain, moyenne
+
+        observe: dict[str, float] = {}
+        attendu: dict[str, float] = {}
+        for dom, ext, buts_dom, buts_ext, poids in lignes:
+            observe[dom] = observe.get(dom, 0.0) + poids * buts_dom
+            attendu[dom] = attendu.get(dom, 0.0) + poids * dom_fac * faille[ext]
+            observe[ext] = observe.get(ext, 0.0) + poids * buts_ext
+            attendu[ext] = attendu.get(ext, 0.0) + poids * ext_fac * faille[dom]
+        for nom, total in observe.items():
+            offense[nom] = (total + a_priori) / (attendu[nom] + a_priori)
+
+        observe, attendu = {}, {}
+        for dom, ext, buts_dom, buts_ext, poids in lignes:
+            observe[ext] = observe.get(ext, 0.0) + poids * buts_dom
+            attendu[ext] = attendu.get(ext, 0.0) + poids * dom_fac * offense[dom]
+            observe[dom] = observe.get(dom, 0.0) + poids * buts_ext
+            attendu[dom] = attendu.get(dom, 0.0) + poids * ext_fac * offense[ext]
+        for nom, total in observe.items():
+            faille[nom] = (total + a_priori) / (attendu[nom] + a_priori)
+
+    forces.base = math.log(moyenne)
+    forces.avantage = math.log(terrain)
+    for nom in joues:
+        forces.attaque[nom] = max(-PLAFOND, min(PLAFOND, math.log(offense[nom])))
+        forces.defense[nom] = max(-PLAFOND, min(PLAFOND, -math.log(faille[nom])))
     return forces
+
+
+#: Matchs fictifs a la moyenne globale ajoutes a chaque competition pour sa
+#: moyenne de buts : une competition vue dix fois n'a pas de moyenne propre.
+TOTAL_A_PRIORI = 10.0
+
+
+def totaux_par_competition(
+    matchs: Sequence[dict[str, Any]],
+) -> tuple[float, dict[str, float]]:
+    """Buts par match, en moyenne globale et par competition (nom normalise)."""
+    if not matchs:
+        return 0.0, {}
+    cumuls: dict[str, list[float]] = {}
+    for match in matchs:
+        nom = normaliser_competition(match.get("competition", ""))
+        cumul = cumuls.setdefault(nom, [0.0, 0.0])
+        cumul[0] += match["buts_domicile"] + match["buts_exterieur"]
+        cumul[1] += 1
+    globale = sum(c[0] for c in cumuls.values()) / len(matchs)
+    return globale, {
+        nom: (buts + TOTAL_A_PRIORI * globale) / (nombre + TOTAL_A_PRIORI)
+        for nom, (buts, nombre) in cumuls.items()
+        if nom
+    }
+
+
+def normaliser_competition(nom: str) -> str:
+    """Meme convention que `api_client.normalize_competition`, sans l'importer.
+
+    Le flux du jour ajoute un suffixe de phase (« Liga Profesional -
+    Cloture ») que les historiques n'ont pas.
+    """
+    return (nom or "").split(" - ", 1)[0].strip()
 
 
 def rafraichir(chemin: pathlib.Path = CHEMIN) -> dict[str, Any]:
@@ -424,6 +527,7 @@ def rafraichir(chemin: pathlib.Path = CHEMIN) -> dict[str, Any]:
     groupes = composantes(matchs)
     buts = construire(matchs, "buts_domicile", "buts_exterieur")
     xg = construire(matchs, "xg_domicile", "xg_exterieur")
+    total_moyen, totaux = totaux_par_competition(matchs)
     paquet = {
         "matchs": len(matchs),
         "matchs_xg": sum(1 for m in matchs if m.get("xg_domicile") is not None),
@@ -433,6 +537,9 @@ def rafraichir(chemin: pathlib.Path = CHEMIN) -> dict[str, Any]:
         "base": buts.base,
         "avantage": buts.avantage,
         "groupes": {nom: numero for nom, numero in groupes.items()},
+        # Reference du resserrement des totaux, voir `lambdas_attendus`.
+        "total_moyen": total_moyen,
+        "totaux": totaux,
         "buts": {
             "attaque": buts.attaque, "defense": buts.defense, "joues": buts.joues
         },
@@ -516,13 +623,31 @@ def _jeu(paquet: dict[str, Any], nom: str) -> Forces | None:
     if not bloc:
         return None
     return Forces(
-        paquet.get("base", 0.0), paquet.get("avantage", 0.0), PAS,
+        paquet.get("base", 0.0), paquet.get("avantage", 0.0),
         bloc.get("attaque"), bloc.get("defense"), bloc.get("joues"),
     )
 
 
+#: Part de l'ecart a la moyenne de la competition conservee dans le total
+#: attendu. Les notes etalent trop les totaux : en walk-forward (4 899 matchs de
+#: 2026), la pente du total reel sur le total prevu n'est que de 0.52 -- un
+#: match annonce a 3.8 buts en donne 3.3, un match annonce a 1.8 en donne 2.3.
+#: Resserrer de moitie vers la moyenne de la competition :
+#:
+#:     Brier des seuils 1.5 / 2.5 / 3.5    0.2141 -> 0.2087, t = -7.8
+#:     propositions de total a 60-95 %     annonce 73.6 / observe 71.2
+#:                                     ->  annonce 72.2 / observe 72.7
+#:
+#: 1 laisse les notes inchangees. Le meme resserrement sur l'ECART n'apporte
+#: rien de mesurable (t = -1.1) : il n'est pas applique.
+RESSERREMENT_TOTAL = 0.5
+
+
 def lambdas_attendus(
-    domicile: str, exterieur: str, paquet: dict[str, Any] | None = None
+    domicile: str,
+    exterieur: str,
+    paquet: dict[str, Any] | None = None,
+    competition: str = "",
 ) -> tuple[float, float] | None:
     """Nombres de buts attendus pour les deux equipes, ou None si inconnus.
 
@@ -540,6 +665,9 @@ def lambdas_attendus(
     gardent l'avantage). Prendre le meilleur des deux sur chaque moitie donne le
     total des xG sans rien perdre sur l'issue.
 
+    Le total est ensuite resserre vers la moyenne de la `competition` (voir
+    `RESSERREMENT_TOTAL`) ; l'ecart, lui, est garde tel quel.
+
     Rend None des que les notes ne sont pas etablies ou que les deux equipes
     n'appartiennent pas au meme groupe : deux notes construites dans deux jeux a
     somme nulle separes ne se soustraient pas (voir `composantes`).
@@ -556,15 +684,23 @@ def lambdas_attendus(
     if buts is None or not buts.etablies(domicile, exterieur):
         return None
     lam_buts = buts.lambdas(domicile, exterieur)
+    ecart = lam_buts[0] - lam_buts[1]
 
     xg = _jeu(paquet, "xg")
     if xg is None or not xg.etablies(domicile, exterieur):
         # Sans notes de xG, les notes sur les buts font les deux moities.
-        return lam_buts
+        total = lam_buts[0] + lam_buts[1]
+    else:
+        lam_xg = xg.lambdas(domicile, exterieur)
+        total = lam_xg[0] + lam_xg[1]
 
-    lam_xg = xg.lambdas(domicile, exterieur)
-    total = lam_xg[0] + lam_xg[1]
-    ecart = lam_buts[0] - lam_buts[1]
+    # Un paquet sans moyennes (ancien fichier de notes) laisse le total tel quel.
+    reference = (paquet.get("totaux") or {}).get(
+        normaliser_competition(competition), paquet.get("total_moyen")
+    )
+    if reference:
+        total = reference + RESSERREMENT_TOTAL * (total - reference)
+
     # Le total borne l'ecart, sans quoi un lambda deviendrait negatif.
     limite = max(0.0, total - 0.1)
     ecart = max(-limite, min(limite, ecart))

@@ -29,3 +29,9 @@ Thumbs.db
 
 # Base locale des previsions
 ibet.db
+
+# Sauvegardes datees de la base
+sauvegardes/
+
+# Bases SQLite (donnees locales)
+*.db

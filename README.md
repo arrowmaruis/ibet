@@ -495,7 +495,7 @@ sur 26, là où le marché va jusqu'à 90 %.
 (2003→2026), sans une requête de plus :
 
 ```bash
-python forces.py     # reconstruit forces.json (3 s)
+python forces.py     # reconstruit forces.json (25 s)
 ```
 
 > ⚠️ **À relancer quand le cache grossit.** Un fichier de notes ne se périme pas
@@ -504,7 +504,7 @@ python forces.py     # reconstruit forces.json (3 s)
 > signale désormais avant chaque émission et chaque banc d'essai — voir
 > [Ce qu'un fichier de notes périmé coûte](#ce-quun-fichier-de-notes-périmé-coûte).
 
-##### Notes attaque / défense, estimées en ligne
+##### Notes attaque / défense, estimées par maximum de vraisemblance
 
 C'est le modèle de **Maher (1982)** et **Dixon & Coles (1997)** — attaque et défense séparées
 pour chaque équipe :
@@ -514,19 +514,79 @@ lambda_dom = exp(mu + h + attaque[dom] − defense[ext])
 lambda_ext = exp(mu     + attaque[ext] − defense[dom])
 ```
 
-La littérature les estime par maximum de vraisemblance sur une saison entière. Un système qui
-cote en continu ne le peut pas : il doit se mettre à jour après chaque match sans tout
-réestimer. Il emploie donc la **descente de gradient en ligne**, dont la mise à jour pour une
-vraisemblance de Poisson est d'une simplicité remarquable :
+Toutes les notes sont estimées **d'un coup**, au maximum de vraisemblance, sur tout le corpus
+(`forces.construire`). Chaque passe résout exactement chaque note, les autres fixées :
 
 ```
-d log L / d attaque[dom] = buts_dom − lambda_dom
+exp(attaque[i]) = (buts marqués + a_priori) / (buts attendus + a_priori)
 ```
 
-soit « on monte l'attaque quand l'équipe marque plus que prévu ». C'est la forme d'Elo,
-appliquée à un comptage plutôt qu'à un résultat.
+- **`OUBLI = 0.002`** par jour : un match d'il y a un an pèse deux fois moins qu'un match
+  d'hier ;
+- **`A_PRIORI = 1`** : chaque équipe part d'un match fictif joué exactement à la moyenne, ce qui
+  empêche une équipe vue deux fois de recevoir une note extrême.
 
-**Validation en walk-forward** — chaque match prévu avec les notes d'*avant* lui, 5 360 matchs :
+**Pourquoi pas l'apprentissage en ligne.** La première version apprenait les notes par descente
+de gradient, match après match, avec un pas de 0,04. Un tel pas ne laisse pas aux notes le temps
+de s'écarter de la moyenne quand l'équipe médiane du corpus n'a que **4 matchs** : même les
+grands clubs restaient tassés. PSG – Slovan Bratislava sortait à 55 % pour Paris (marché : 95 %),
+Mozambique – Sénégal à 39 % pour le Sénégal (marché : 71 %). Le modèle n'était **pas** mal
+calibré — un favori annoncé à 64 % gagnait 63 % du temps — il départageait mal les équipes.
+
+| Walk-forward, données d'avant chaque match | en ligne | **vraisemblance** | marché |
+|---|---|---|---|
+| 4 996 matchs de 2026 — Brier 1X2 | 0,6014 | **0,5924** *(t = −4,8)* | — |
+| 67 fiches émises avec cotes — Brier 1X2 | 0,5332 | **0,4891** | 0,4581 |
+| 67 fiches émises — favori juste | 45 | **49** | 50 |
+
+Réglages balayés (Brier 1X2, 4 996 matchs) : oubli 0 → 0,5932, 0,002 → **0,5924**,
+0,005 → 0,5942 ; a priori 1 → **0,5924**, 3 → 0,5937. Essayés sans gain : avantage du terrain
+par compétition (t = +0,3), cibles mélangées buts / xG (t = −0,9), dispersion ou Dixon-Coles
+sur le 1X2 (± 0,0005), probabilités plus tranchées (température : toujours pire).
+
+##### Le total resserré vers la moyenne de la compétition
+
+Les notes étalent trop les **totaux** : la pente du total réel sur le total prévu n'est que de
+**0,52** (4 899 matchs de 2026). Un match annoncé à 3,8 buts en donne 3,3 ; un match annoncé à
+1,8 en donne 2,3. D'où les « moins de 2,5 » annoncés à 69 % et réussis à 60 %, et les « plus de
+3,5 » annoncés à 69 % et réussis à 48 %.
+
+`forces.lambdas_attendus` resserre donc le total **de moitié** vers la moyenne de buts de la
+compétition (`RESSERREMENT_TOTAL = 0.5`, moyenne tirée vers la moyenne globale par 10 matchs
+fictifs, enregistrée dans `forces.json`). L'écart entre les deux équipes est gardé tel quel.
+
+| | avant | **après** |
+|---|---|---|
+| Brier des seuils 1,5 / 2,5 / 3,5 | 0,2141 | **0,2087** *(t = −7,8)* |
+| Propositions de total à 60-95 % : annoncé / observé | 73,6 % / 71,2 % | **72,2 % / 72,7 %** |
+
+Le même resserrement appliqué à l'écart n'apporte rien de mesurable (t = −1,1) : il n'est pas
+appliqué.
+
+##### L'issue combinée aux cotes des bookmakers
+
+Quand les cotes 1X2 sont connues à l'émission, le 1X2 publié — et ses propositions victoire, nul,
+double chance — est le mélange **10 % modèle, 90 % bookmaker** (marge de Shin retirée,
+`POIDS_MODELE_ISSUE` dans `modeles/buts.py`). Les nombres de buts attendus ne changent pas.
+
+Mesuré sur **1 784 matchs de 2026** appariés aux cotes de Bet365 (football-data.co.uk), le modèle
+rejoué avec les seules données d'avant chaque match :
+
+| | Brier 1X2 | Favori juste |
+|---|---|---|
+| modèle seul | 0,6146 | 48,5 % |
+| **Bet365 seul** | **0,5954** | **50,8 %** |
+| combinaison, 10 % modèle *(retenue)* | 0,5958 *(+0,0004, non significatif)* | 50,6 % |
+
+Sur le 1X2, le modèle n'apporte rien au bookmaker : le poids réglé mois par mois hors échantillon
+vaut 0. Les 10 % gardent une combinaison sans perte mesurable. Une première mesure sur 67 fiches
+semblait donner l'avantage à la combinaison : c'était du bruit, que 3 731 matchs BetExplorer
+puis 1 784 matchs Bet365 ont effacé. Sur le plus / moins de 2,5 buts, en revanche, le modèle est
+à 0,003 de Bet365.
+
+Le critère 13 (valeur des paris) continue de comparer le **modèle seul** au bookmaker.
+
+**Validation historique** — l'ancienne version en ligne, 5 360 matchs :
 
 | | Brier | vs forme seule |
 |---|---|---|
@@ -582,8 +642,7 @@ franchissant ce cap que les sélections sont passées de « aucune note » à «
 
 Et, contrairement à Elo, elles améliorent aussi le **total** : erreur absolue 1,396 contre
 1,437, **t = −5,9**. Elo ne sait que départager deux équipes ; l'attaque/défense dit aussi
-combien de buts attendre. Le pas d'apprentissage est réglé par balayage (minimum intérieur net
-à 0,04).
+combien de buts attendre.
 
 ##### Les xG pour le volume, les buts pour l'écart
 
@@ -1439,12 +1498,14 @@ durée de vie de `CACHE_TTL` secondes (1 h par défaut). Utile pour ne pas brûl
 │   ├── estimation.py   #   moteur Maher partagé (attaque / défense)
 │   ├── lois.py         #   lois de comptage et loi jointe
 │   ├── offres.py       #   sélection des propositions, tableau des marchés
-│   └── reglages.py     #   Params et réglages du moteur
+│   ├── reglages.py     #   Params et réglages du moteur
+│   └── journal/        #   une fiche par modèle : versions, points forts / faibles, mesures
 ├── context.py          # les 14 critères de décision autour du modèle
 ├── store.py            # base SQLite des prévisions (ibet.db)
 ├── forecast.py         # émission des prévisions des matchs à venir
 ├── verify.py           # confrontation des prévisions aux résultats réels
 ├── rattrapage.py       # retrouve les résultats sortis de la fenêtre de la source
+├── etude.py            # compare ce que chaque version de chaque modèle a donné
 ├── backtest.py         # évaluation du modèle sur des matchs déjà joués
 ├── marche.py           # valeur des paris face au marché, sélection, rendement
 ├── criteres.py         # mesure prospective des critères laissés à poids zéro

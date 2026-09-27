@@ -17,6 +17,7 @@ from .base import ModeleEvenement
 
 class ModeleXG(ModeleEvenement):
     cle = "xg"
+    version = "1.0.0"
     libelle = "Buts attendus"
     champ = "xg"
     seuil = 2.5

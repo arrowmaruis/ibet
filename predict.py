@@ -77,9 +77,10 @@ from __future__ import annotations
 from typing import Any
 
 import context
+import marche
 
 import modeles
-from modeles import BUTS, MODELES, XG
+from modeles import BUTS, CARTONS_JAUNES, CORNERS, MODELES, TIRS_CADRES, XG
 
 # Les imports qui suivent sont en bonne partie des RE-EXPORTS : le reste du
 # projet et les tests lisent ces noms sous `predict.`, et ils y restent.
@@ -224,6 +225,19 @@ def offer_candidates(
 _corriger = corriger
 
 
+def probabilites_du_marche(
+    cotes: dict[str, Any] | None,
+) -> dict[str, float] | None:
+    """Probabilites 1X2 du marche, marge retiree, ou None sans cotes completes."""
+    moyennes, _ = context._deux_cotes(cotes)
+    if not all(moyennes.get(k) for k in ("domicile", "nul", "exterieur")):
+        return None
+    probabilites = marche.probabilites_implicites(
+        {k: float(moyennes[k]) for k in ("domicile", "nul", "exterieur")}
+    )
+    return probabilites or None
+
+
 def build(
     match: dict[str, Any],
     form: dict[str, Any],
@@ -328,8 +342,26 @@ def build(
     # Ce que chaque modele recoit de l'exterieur. Seuls les buts en ont : le
     # xG (critere 11) et les notes attaque / defense globales.
     apports: dict[str, dict[str, Any]] = {
-        BUTS.cle: {"xg": (lam_xg, melange_xg), "forces": lambdas_forces},
+        BUTS.cle: {
+            "xg": (lam_xg, melange_xg),
+            "forces": lambdas_forces,
+            # Issue du marche, combinee a celle du modele (`buts.caler`). Ce sont
+            # les cotes MOYENNES qui disent ce que pense le marche ; les
+            # meilleures, elles, servent a la valeur d'un pari (critere 13).
+            "marche": probabilites_du_marche(
+                cotes or (collecte or {}).get("cotes")
+            ),
+        },
     }
+    # Les cartons recoivent la discipline du match : arbitre, onze, entraineur
+    # (modele 2.0.0). Sans contexte, rien : le modele est alors le 1.0.0.
+    if collecte is not None and collecte.get("discipline"):
+        apports[CARTONS_JAUNES.cle] = collecte["discipline"]
+    # Corners et tirs cadres recoivent les styles des onze du jour
+    # (`modeles/styles.py`). Sans contexte, rien.
+    if collecte is not None and collecte.get("styles"):
+        apports[CORNERS.cle] = collecte["styles"].get("corners")
+        apports[TIRS_CADRES.cle] = collecte["styles"].get("tirs_cadres")
 
     # --- Seconde phase : chaque modele corrige, puis prevoit ---------------
     prediction: dict[str, Any] = {
@@ -356,6 +388,9 @@ def build(
         # meme n'a toujours pas de terme de confrontation directe.
         "confrontations": form.get("confrontations") or [],
         "reglage": params._asdict(),
+        # Versions des modeles qui ont produit la fiche : sans elles, on ne
+        # saurait pas quelle version creditee d'une reussite ou d'un echec.
+        "versions": modeles.versions(),
         "grandeurs": [],
     }
 
@@ -370,7 +405,12 @@ def build(
         )
         if "resultat" in entry:
             # L'issue, publiee par le modele de l'issue dans la fiche des buts.
-            outcome_final = entry["resultat"]
+            # Le critere 13 compare le MODELE au marche : quand l'issue a ete
+            # combinee aux cotes, c'est l'issue du modele seul qui lui revient,
+            # sans quoi l'ecart affiche ne serait qu'un dixieme de l'ecart reel.
+            outcome_final = (entry.get("marche") or {}).get(
+                "issue_modele"
+            ) or entry["resultat"]
         prediction["grandeurs"].append(entry)
 
     if not prediction["grandeurs"]:
