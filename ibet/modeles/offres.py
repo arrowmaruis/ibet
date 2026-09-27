@@ -19,12 +19,12 @@ OFFER_MIN = 0.60
 OFFER_CEILING = 0.95
 OFFER_MAX = 6
 
-# Ce que paieraient les dix bookmakers de reference (`bookmakers.py`). Une
+# Ce que paieraient les bookmakers de reference (`bookmakers.py`). Une
 # proposition n'est retenue que si au moins trois d'entre eux la paient
 # COTE_MIN ou plus -- « plus de 0.5 but » a 93 % se paie 1.01, personne ne la
 # prend et aucun coupon ne l'accepte. `MARGE_BOOKMAKER` est la marge mediane
-# des dix, pour la cote « moyenne » affichee.
-MARGE_BOOKMAKER = 0.067
+# de la liste, pour la cote « moyenne » affichee.
+MARGE_BOOKMAKER = 0.060
 COTE_MIN = 1.15
 
 
@@ -73,7 +73,7 @@ def select_offers(
 ) -> list[dict[str, Any]]:
     """Les propositions retenues : les plus sures, et les moins redondantes.
 
-    Sous OFFER_MIN, une proposition n'engage rien ; si moins de trois des dix
+    Sous OFFER_MIN, une proposition n'engage rien ; si moins de trois des
     bookmakers de reference la paient COTE_MIN, elle enonce une evidence. Entre les deux, les plus probables d'abord -- mais
     avec un plafond par famille.
 

@@ -1,4 +1,4 @@
-"""Les dix bookmakers de reference : ce que chacun paierait une proposition.
+"""Les bookmakers de reference : ce que chacun paierait une proposition.
 
 iBET est un systeme d'analyse, pas l'outil d'un seul parieur : ses
 utilisateurs jouent chez des operateurs differents, et un meme pari ne vaut
@@ -9,8 +9,17 @@ Chaque operateur est decrit par sa MARGE, mesuree et non supposee : la somme
 des inverses de ses cotes 1X2, moins 1, mediane sur les matchs releves.
 
     football-data.co.uk   saisons 2024-25 et 2025-26, sept grands championnats
-    the-odds-api.com      Ligue 1, 18 matchs, septembre 2026 (operateurs
-                          absents de football-data.co.uk)
+    betexplorer.com       comparateur, 120 matchs de sept championnats,
+                          aout-septembre 2026 (cotes de cloture)
+    the-odds-api.com      Ligue 1, 18 matchs, septembre 2026 (versions
+                          francaises de Betclic, Winamax, Unibet)
+    sites des operateurs  SportyBet (Nigeria, Ghana, Kenya, 300 matchs a
+                          venir) et Betika (Kenya, 75 matchs), septembre 2026
+
+Quatre operateurs AFRICAINS figurent dans la liste : SportyBet, Megapari,
+Mozzartbet et Betika. Melbet, 22Bet, Bet9ja et Premier Bet n'ont pas pu etre
+mesures (flux refuses ou non publics) : ils n'y sont pas, faute de marge
+connue.
 
 La marge des marches SPECIAUX (corners, tirs cadres, cartons) n'est publiee
 par aucune source gratuite ; elle est plus forte que celle du 1X2 sur les
@@ -38,19 +47,24 @@ class Bookmaker(NamedTuple):
     nom: str
     marge: float          # marge 1X2 mesuree
     source: str
+    zone: str = "international"
 
 
 BOOKMAKERS: tuple[Bookmaker, ...] = (
     Bookmaker("1xBet", 0.016, "football-data.co.uk, 2 299 matchs"),
     Bookmaker("Pinnacle", 0.037, "football-data.co.uk, 3 561 matchs"),
+    Bookmaker("SportyBet", 0.040, "sportybet.com (NG, GH, KE), 300 matchs", "Afrique"),
+    Bookmaker("Megapari", 0.041, "betexplorer.com, 120 matchs", "Afrique"),
+    Bookmaker("Mozzartbet", 0.053, "betexplorer.com, 120 matchs", "Afrique"),
     Bookmaker("bet365", 0.056, "football-data.co.uk, 4 728 matchs"),
     Bookmaker("Bwin", 0.059, "football-data.co.uk, 3 830 matchs"),
     Bookmaker("William Hill", 0.061, "football-data.co.uk, 1 791 matchs"),
-    Bookmaker("Betfair", 0.073, "the-odds-api.com (Sportsbook), 18 matchs"),
-    Bookmaker("Betway", 0.087, "the-odds-api.com, 18 matchs"),
-    Bookmaker("Betclic", 0.101, "the-odds-api.com (FR), 18 matchs"),
-    Bookmaker("Winamax", 0.130, "the-odds-api.com (FR), 18 matchs"),
-    Bookmaker("Unibet", 0.139, "the-odds-api.com (FR), 18 matchs"),
+    Bookmaker("Betway", 0.068, "betexplorer.com, 120 matchs"),
+    Bookmaker("Betfair", 0.096, "betexplorer.com (Sportsbook), 120 matchs"),
+    Bookmaker("Betika", 0.096, "betika.com (KE), 75 matchs", "Afrique"),
+    Bookmaker("Betclic", 0.101, "the-odds-api.com (FR), 18 matchs", "France"),
+    Bookmaker("Winamax", 0.130, "the-odds-api.com (FR), 18 matchs", "France"),
+    Bookmaker("Unibet", 0.139, "the-odds-api.com (FR), 18 matchs", "France"),
 )
 
 

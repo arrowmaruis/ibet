@@ -2900,15 +2900,16 @@ def main(argv: list[str] | None = None) -> int:
     check("la cote juste accompagne chaque proposition", retenues[0]["cote_juste"], round(1 / 0.78, 2))
     check("cote estimee au-dessus du minimum", retenues[0]["cote_estimee"] >= of.COTE_MIN, True)
     from ibet.modeles import bookmakers as bk
-    check("dix bookmakers de reference", len(bk.BOOKMAKERS), 10)
+    check("quatorze bookmakers de reference", len(bk.BOOKMAKERS), 14)
+    check("dont quatre africains", sum(1 for b in bk.BOOKMAKERS if b.zone == "Afrique"), 4)
     check("le moins margine paie le mieux", bk.cotes(0.7)[0][0], "1xBet")
     check("un marche special paie moins que le 1X2",
           bk.cotes(0.7, special=True)[0][1] < bk.cotes(0.7)[0][1], True)
     check("chaque proposition dit ou la prendre",
-          [n for n, _ in retenues[0]["bookmakers"]["meilleurs"]], ["1xBet", "Pinnacle", "bet365"])
-    # A 81 %, trois operateurs paient encore 1.15 sur les buts, pas sur les corners.
-    check("81 % : jouable sur les buts", of.jouable(0.81), True)
-    check("81 % : pas sur un marche special", of.jouable(0.81, special=True), False)
+          [n for n, _ in retenues[0]["bookmakers"]["meilleurs"]], ["1xBet", "Pinnacle", "SportyBet"])
+    # A 82 %, trois operateurs paient encore 1.15 sur les buts, pas sur les corners.
+    check("82 % : jouable sur les buts", of.jouable(0.82), True)
+    check("82 % : pas sur un marche special", of.jouable(0.82, special=True), False)
 
     print("\nZ8. Cotes du marche : corners et tirs cadres")
     from ibet.modeles.apports import corriger_par_le_marche

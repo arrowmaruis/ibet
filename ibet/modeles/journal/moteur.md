@@ -10,7 +10,53 @@ Toute modification ici change **toutes** les grandeurs : elle incrémente
 
 ---
 
-## 1.1.0 — en service depuis le 2026-09-27
+## 1.2.0 — en service depuis le 2026-09-27
+
+**Changement** : quatorze bookmakers de référence au lieu de dix, dont
+**quatre africains** — SportyBet, Megapari, Mozzartbet, Betika. Marges de
+Betway et Betfair re-mesurées sur 120 matchs au lieu de 18. Aucune
+probabilité ne change ; la liste des propositions retenues, si.
+**Pourquoi** : les utilisateurs d'iBET jouent aussi en Afrique, chez des
+opérateurs absents de la liste.
+
+### Ce que fait la version
+| Bookmaker | Zone | Marge 1X2 | Mesurée sur |
+|---|---|---|---|
+| 1xBet | international | 1.6 % | football-data.co.uk, 2 299 matchs |
+| Pinnacle | international | 3.7 % | football-data.co.uk, 3 561 matchs |
+| SportyBet | Afrique | 4.0 % | sportybet.com (Nigeria, Ghana, Kenya), 300 matchs à venir |
+| Megapari | Afrique | 4.1 % | betexplorer.com, 120 matchs |
+| Mozzartbet | Afrique | 5.3 % | betexplorer.com, 120 matchs |
+| bet365 | international | 5.6 % | football-data.co.uk, 4 728 matchs |
+| Bwin | international | 5.9 % | football-data.co.uk, 3 830 matchs |
+| William Hill | international | 6.1 % | football-data.co.uk, 1 791 matchs |
+| Betway | international | 6.8 % | betexplorer.com, 120 matchs (8.7 % sur 18 en 1.1.0) |
+| Betfair Sportsbook | international | 9.6 % | betexplorer.com, 120 matchs (7.3 % sur 18 en 1.1.0) |
+| Betika | Afrique | 9.6 % | betika.com (Kenya), 75 matchs à venir |
+| Betclic | France | 10.1 % | the-odds-api.com, 18 matchs |
+| Winamax | France | 13.0 % | the-odds-api.com, 18 matchs |
+| Unibet | France | 13.9 % | the-odds-api.com, 18 matchs |
+
+- La règle ne change pas : une proposition est retenue si **trois**
+  bookmakers au moins la paient 1.15 ou plus. SportyBet devenant troisième,
+  le plafond monte légèrement : 82 % sur les buts, 80.5 % sur les marchés
+  spéciaux.
+- Marge médiane de la liste (cote « moyenne » affichée) : 6.0 %.
+- Le tableau par bookmaker de la fiche affiche la zone de chacun.
+
+### Points faibles
+- **Melbet, 22Bet, Bet9ja, Premier Bet absents** : leurs flux refusent les
+  requêtes automatiques ou ne sont pas publics. Aucune marge n'a été supposée
+  pour eux.
+- SportyBet et Betika : marges mesurées sur des matchs **à venir** de toutes
+  compétitions (souvent plus margées que les grands championnats), pas sur
+  des cotes de clôture.
+- Betika partage 9.6 % avec Betfair par coïncidence de mesure, pas par
+  construction.
+
+---
+
+## 1.1.0 — retirée le 2026-09-27
 
 **Changement** : les propositions suivent ce que proposent les bookmakers.
 Aucune probabilité ne change ; ce qui change, c'est **quelles** propositions

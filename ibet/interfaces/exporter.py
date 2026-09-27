@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from ibet import chemins
+from ibet.modeles import bookmakers as _bk
 from ibet.sources.api_client import STAT_ORDER, stat_number
 
 EXPORT_DIR = chemins.EXPORTS
@@ -693,7 +694,7 @@ def render_prediction(matches: Sequence[dict[str, Any]]) -> str:
         # modele. C'est le chiffre a comparer a celle du bookmaker.
         lines.append(
             "  %-14s %-13s %-46s %8s %6s  %s"
-            % ("Grandeur", "Type", "Proposition", "Reussite", "Cote", "Chez les 10 bookmakers")
+            % ("Grandeur", "Type", "Proposition", "Reussite", "Cote", "Chez les %d bookmakers" % len(_bk.BOOKMAKERS))
         )
         lines.append("  " + "-" * 122)
         for metric in prediction["grandeurs"]:
@@ -890,7 +891,7 @@ def _cote(offer: dict[str, Any]) -> str:
 
 
 def _ou_la_prendre(offer: dict[str, Any]) -> str:
-    """Fourchette des cotes sur les dix bookmakers de reference, et chez
+    """Fourchette des cotes sur les bookmakers de reference, et chez
     combien d'entre eux la proposition reste au-dessus de la cote minimale."""
     resume = offer.get("bookmakers") or {}
     fourchette = resume.get("fourchette")
@@ -902,7 +903,7 @@ def _ou_la_prendre(offer: dict[str, Any]) -> str:
 
 
 def render_bookmakers(prediction: dict[str, Any]) -> list[str]:
-    """Pour chacun des dix bookmakers : les propositions de la fiche qu'il
+    """Pour chacun des bookmakers de reference : les propositions de la fiche qu'il
     paie au-dessus de la cote minimale, et la meilleure d'entre elles.
 
     Chaque utilisateur joue chez l'un ou l'autre : ce tableau lui montre ce
@@ -913,8 +914,9 @@ def render_bookmakers(prediction: dict[str, Any]) -> list[str]:
     offres = [o for m in prediction["grandeurs"] for o in m.get("offres") or []]
     if not offres:
         return []
-    lignes = ["", "  %-14s %6s %11s  %s" % ("Bookmaker", "Marge", "Jouables", "Meilleure proposition chez lui"),
-              "  " + "-" * 100]
+    lignes = ["", "  %-14s %-13s %6s %11s  %s" % (
+        "Bookmaker", "Zone", "Marge", "Jouables", "Meilleure proposition chez lui"),
+              "  " + "-" * 114]
     for b in bk.BOOKMAKERS:
         jouables = []
         for o in offres:
@@ -922,8 +924,8 @@ def render_bookmakers(prediction: dict[str, Any]) -> list[str]:
             if cote and cote >= COTE_MIN:
                 jouables.append((o["p"], cote, o["libelle"]))
         meilleure = max(jouables) if jouables else None
-        lignes.append("  %-14s %5.1f%% %7d/%-3d  %s" % (
-            b.nom, 100 * b.marge, len(jouables), len(offres),
+        lignes.append("  %-14s %-13s %5.1f%% %7d/%-3d  %s" % (
+            b.nom, b.zone, 100 * b.marge, len(jouables), len(offres),
             "%s a %.2f" % (_truncate(meilleure[2], 60), meilleure[1]) if meilleure else "-"))
     lignes.append("")
     for chunk in _wrap(
