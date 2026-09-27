@@ -2873,8 +2873,14 @@ def main(argv: list[str] | None = None) -> int:
     check("a poids nul, les styles ne deplacent rien",
           st.appliquer((5.0, 4.0), {"domicile": {"facteur": 1.2}, "exterieur": {"facteur": 0.8}}, 0.0)[:2],
           (5.0, 4.0))
-    check("le facteur est borne", st.appliquer((5.0, 4.0), {"domicile": {"facteur": 3.0}}, 1.0)[0],
+    check("le facteur est borne",
+          st.appliquer((5.0, 4.0), {"domicile": {"facteur": 3.0, "source": "aligne"}}, 1.0)[0],
           5.0 * st.BORNE)
+    check("l'onze habituel ne deplace rien",
+          st.appliquer((5.0, 4.0), {"domicile": {"facteur": 1.2, "source": "habituel"}}, 1.0)[0], 5.0)
+    check("l'onze aligne deplace les corners au poids mesure",
+          round(CORNERS.ajuster((5.0, 4.0), {"domicile": {"facteur": 1.2, "source": "aligne"}})[0], 4),
+          round(5.0 * 1.2 ** CORNERS.poids_styles, 4))
     check("sans apport, corners et tirs cadres inchanges",
           (CORNERS.ajuster((5.0, 4.0), None)[:2], TIRS_CADRES.ajuster((4.0, 3.0), None)[:2]),
           ((5.0, 4.0), (4.0, 3.0)))

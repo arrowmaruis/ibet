@@ -47,7 +47,9 @@ MINUTES_TITULAIRE = 80.0
 # Minutes minimales pour recevoir une etiquette de style, et percentile du
 # poste a partir duquel elle est donnee.
 MINUTES_ETIQUETTE = 450.0
-PERCENTILE_ETIQUETTE = 0.80
+PERCENTILE_ETIQUETTE = 0.90
+# Traits affiches au plus par joueur : les plus marques d'abord.
+ETIQUETTES_MAX = 3
 
 # Grandeurs suivies par joueur (cles de `api_client.STATS_JOUEUR`).
 GRANDEURS = (
@@ -298,12 +300,15 @@ class Styles:
     def etiquettes(self, profil: dict[str, Any], seuils: dict[tuple[str, str], float]) -> list[str]:
         if profil["minutes"] < MINUTES_ETIQUETTE:
             return []
-        rendu = []
+        # Classees par marge au-dessus du seuil de son poste : un defenseur
+        # central qui degage deux fois plus que le seuil est d'abord un
+        # « degageur », meme s'il tire un peu plus que ses pareils.
+        marques = []
         for lib, g, postes in ETIQUETTES:
             seuil = seuils.get((profil["poste"], g))
             if profil["poste"] in postes and seuil is not None and profil["par_90"][g] >= seuil > 0:
-                rendu.append(lib)
-        return rendu
+                marques.append((profil["par_90"][g] / seuil, lib))
+        return [lib for _, lib in sorted(marques, reverse=True)[:ETIQUETTES_MAX]]
 
     def effectif(self, equipe: str, date: str) -> list[dict[str, Any]]:
         """Joueurs vus avec l'equipe (dernier club connu), des plus utilises
@@ -327,7 +332,12 @@ def appliquer(
 ) -> tuple[float, float, dict[str, Any] | None]:
     """Nombres attendus multiplies par le facteur de chaque onze, a la
     puissance `poids`, bornes. A poids nul, les nombres ressortent intacts --
-    mais la trace est rendue : le facteur reste lisible dans la fiche."""
+    mais la trace est rendue : le facteur reste lisible dans la fiche.
+
+    Seul l'onze ALIGNE agit. L'onze habituel (composition pas encore publiee)
+    n'a rien gagne a la mesure, et degradait la prevision a poids plein
+    (`mesure_styles.py`, 928 matchs de test, t = -2.2 sur les corners) : ce
+    qu'il sait, l'historique de l'equipe le sait deja."""
     if not apports:
         return lam[0], lam[1], None
     resultat = []
@@ -335,7 +345,8 @@ def appliquer(
     for rang, cote in enumerate(("domicile", "exterieur")):
         bloc = apports.get(cote) or {}
         brut = float(bloc.get("facteur") or 1.0)
-        applique = max(1.0 / BORNE, min(BORNE, brut ** poids)) if poids else 1.0
+        actif = poids and bloc.get("source") == "aligne"
+        applique = max(1.0 / BORNE, min(BORNE, brut ** poids)) if actif else 1.0
         resultat.append(lam[rang] * applique)
         trace[cote] = dict(bloc, facteur_applique=round(applique, 3))
     trace["lambda_avant_styles"] = (round(lam[0], 2), round(lam[1], 2))

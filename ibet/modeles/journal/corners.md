@@ -4,7 +4,90 @@ Fichier : `ibet/modeles/corners.py`. Clé : `corners`.
 
 ---
 
-## 1.0.0 — en service depuis le 2026-09-27
+## 2.0.0 — en service depuis le 2026-09-27
+
+**Changement** : le modèle reçoit les **styles des joueurs alignés**, tirés
+d'une nouvelle source : les statistiques par joueur et par match de Flashscore
+(table `stats_joueurs`). Un facteur « onze aligné / onzes de référence »
+déplace le nombre attendu de chaque équipe, au poids **0.25**, et **seulement
+quand la composition est publiée**.
+**Pourquoi** : un corner naît d'un geste individuel — centre dévié, tir contré,
+débordement. Le modèle d'équipe ne sait pas qui joue : un latéral qui centre
+dix fois par match ne produit pas les corners du défenseur central qui le
+remplace.
+**Mesure avant adoption** : `python -m ibet mesurer-styles`, rejeu
+chronologique de 2 318 matchs de sept championnats (Angleterre, Espagne,
+Italie, Allemagne, France, Portugal, Pays-Bas ; 2025-26 et début 2026-27),
+chaque profil ne voyant que les matchs antérieurs. Poids choisi sur les 60 %
+les plus anciens (1 390 matchs), verdict sur les 40 % les plus récents
+(928 matchs) :
+
+| Variante (test) | Poids | Écart log-vraisemblance | t | Brier total | Brier équipe |
+|---|---|---|---|---|---|
+| référence (Maher réduit aux corners) | — | — | — | 0.2244 | 0.1991 |
+| **onze aligné, taux par 90 (retenu)** | **0.25** | **+0.0074** | **+2.7** | **0.2236** | **0.1986** |
+| onze aligné, part du volume d'équipe | 0.25 | +0.0021 | +0.8 | 0.2239 | 0.1991 |
+| onze habituel (3 derniers matchs) | 0.25 | −0.0005 | −0.2 | 0.2246 | 0.1990 |
+| onze aligné, taux, poids 1 | 1 | +0.0050 | +0.5 | 0.2235 | 0.1989 |
+| onze habituel, poids 1 | 1 | −0.0203 | −2.2 | 0.2270 | 0.2002 |
+
+Comme pour les cartons, la référence est un Maher reconstruit sur l'archive,
+pas le moteur complet : le gain mesuré est celui d'un facteur **ajouté** à un
+attendu d'équipes.
+
+### Ce que fait la version
+- **Données** : `api_client.stats_joueurs` lit, pour un match terminé, une
+  trentaine de grandeurs par joueur (minutes, tirs, tirs contrés, centres,
+  dribbles, touches dans la surface, dégagements, contres…) et son poste.
+  Relevé : `python -m ibet rattraper-joueurs` (reprenable, incrémental ;
+  2 750 matchs, 85 000 lignes joueur au 27 septembre 2026).
+- **Profil d'un joueur** (`ibet/modeles/styles.py`) : taux par 90 minutes,
+  pondérés par l'ancienneté (demi-vie 240 jours), lissés vers le taux de son
+  poste par 450 minutes fictives.
+- **Indice corners** : ce qu'un geste pèse en corners, d'après la régression
+  des corners d'une équipe sur les gestes de ses joueurs dans le même match
+  (5 490 équipes-matchs, R² = 0.53) : centres 1, tirs contrés 1, touches dans
+  la surface 0.35, dribbles réussis 0.3, tirs 0.2. Un corner pour environ
+  sept centres.
+- **Facteur** : indice de l'onze aligné (80 minutes chacun) divisé par la
+  moyenne, pondérée comme l'historique (demi-vie 180 jours), des onzes des
+  vingt derniers matchs — les mêmes profils des deux côtés, seul l'effectif
+  change. Élevé à la puissance **0.25**, borné à [1/1.3 ; 1.3]. Facteur 1 sans
+  cinq onzes de référence, ou hors des championnats relevés.
+- **Onze habituel** : calculé et affiché dans la fiche (clé `styles`), jamais
+  appliqué.
+- Sans contexte, `ajuster` ne fait rien : le modèle est alors le 1.0.0.
+
+### Points forts
+- Gain réel sur des matchs jamais vus (t = +2.7), sur les deux familles de
+  seuils (total et équipe).
+- Catalogue lisible des styles : `python -m ibet catalogue --equipe <nom>`.
+
+### Points faibles
+- **Gain modeste** : +0.0074 par match. L'onze aligné ne s'écarte de l'onze
+  de référence que de 6 % en moyenne (12 % au 90e centile).
+- **Composition publiée une heure avant le match** : une fiche émise la veille
+  n'en profite pas.
+- **Sept championnats seulement**, depuis août 2025 : ailleurs, facteur 1.
+- **Taux dépendants du club** : un joueur transféré d'une équipe dominante
+  arrive avec des taux gonflés. Le mode « part du volume d'équipe », censé
+  corriger cela, a moins gagné (+0.0021).
+
+### Pistes pour la suite
+- **Volet défensif** : dégagements et contres de l'adversaire, qui concèdent
+  des corners.
+- **Remplaçants** : 80 minutes par titulaire, faute de mieux.
+- Re-mesurer à la fin de la saison 2026-27, quand l'archive aura doublé.
+
+### Mesures en service
+Pas encore de fiche tranchée en 2.0.0.
+
+| Période | Matchs | Props | Annoncé | Observé | Écart | Brier |
+|---|---|---|---|---|---|---|
+
+---
+
+## 1.0.0 — retirée le 2026-09-27
 
 **Changement** : première version versionnée. Calcul identique à celui d'avant
 le découpage en un modèle par événement.

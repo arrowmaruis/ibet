@@ -4,7 +4,8 @@ Lit les statistiques par joueur archivees (`rattrapage_joueurs.py`) et affiche,
 par equipe, chaque joueur avec ses taux par 90 minutes -- tirs, tirs cadres,
 centres, dribbles, touches dans la surface, passes cles -- et ses etiquettes
 de style (« centreur », « tireur »...), donnees quand un taux est dans le
-cinquieme superieur de son poste, sur au moins 450 minutes.
+dixieme superieur de son poste, sur au moins 450 minutes -- trois au plus,
+les plus marques d'abord.
 
 Les taux sont ponderes par l'anciennete (demi-vie 240 jours) et lisses vers le
 taux du poste : un joueur vu deux fois ressemble encore beaucoup a un joueur
@@ -59,6 +60,10 @@ def _saison_debut() -> str:
 def afficher_equipe(index: Styles, equipe: str, date: str, seuils, style: str = "",
                     minutes_min: float = 90.0) -> list[dict]:
     profils = [p for p in index.effectif(equipe, date) if p["minutes"] >= minutes_min]
+    # L'indice d'equipe porte sur tout l'effectif, filtre de style ou non.
+    corners = sum(sorted(
+        (sum(c * p["par_90"][g] for g, c in INDICES["corners"].items()) for p in profils),
+        reverse=True)[:11]) * MINUTES_TITULAIRE / 90.0
     lignes = []
     for p in profils:
         etiquettes = index.etiquettes(p, seuils)
@@ -67,9 +72,6 @@ def afficher_equipe(index: Styles, equipe: str, date: str, seuils, style: str = 
         lignes.append(dict(p, etiquettes=etiquettes))
     if not lignes:
         return []
-    corners = sum(sorted(
-        (sum(c * p["par_90"][g] for g, c in INDICES["corners"].items()) for p in lignes),
-        reverse=True)[:11]) * MINUTES_TITULAIRE / 90.0
     print("\n%s  -- %d joueurs, indice corners des onze plus actifs : %.1f"
           % (equipe, len(lignes), corners))
     print("  %-22s %-2s %5s  %s  %s" % (

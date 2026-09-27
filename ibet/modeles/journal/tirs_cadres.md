@@ -4,7 +4,24 @@ Fichier : `ibet/modeles/tirs_cadres.py`. Clé : `tirs_cadres`.
 
 ---
 
-## 1.0.0 — en service depuis le 2026-09-27
+## 1.0.1 — en service depuis le 2026-09-27
+
+**Changement** : la fiche affiche le facteur des **styles des joueurs alignés**
+(clé `styles`), sans rien déplacer : poids **0**. Aucune probabilité ne change.
+**Pourquoi** : même idée que les corners 2.0.0 — un tireur absent, un autre qui
+arrive —, sur les tirs cadrés par 90 minutes de chaque titulaire.
+**Mesure avant adoption** : `python -m ibet mesurer-styles --grandeur
+tirs_cadres`, 928 matchs de test : onze aligné, poids 0.25, +0.0037 de
+log-vraisemblance (t = +1.2) ; à poids 1, −0.036 (t = −2.8). Dans le bruit à
+poids faible, nuisible à poids plein : le facteur reste à zéro, comme les
+joueurs des cartons dans un cas semblable (t = +1.3).
+
+### Pistes pour la suite
+- Re-mesurer quand l'archive des stats joueur aura doublé ; le signe est bon.
+
+---
+
+## 1.0.0 — retirée le 2026-09-27
 
 **Changement** : première version versionnée. Calcul identique à celui d'avant
 le découpage en un modèle par événement.

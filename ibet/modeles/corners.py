@@ -35,15 +35,24 @@ CORRELATION = -0.149
 # fiches seront tranchees.
 CALIBRATION = 1.0
 
-# Styles des joueurs alignes (`styles.py`) : facteur « onze du jour / onzes
-# de reference », eleve a ce poids. Mesure par `mesure_styles.py` ; voir le
-# journal pour le detail.
-POIDS_STYLES = 0.0
+# --- 2.0.0 : styles des joueurs alignes (voir `styles.py`) -------------------
+#
+# Facteur « onze aligne / onzes de reference » sur un indice de gestes qui
+# font les corners (centres, tirs contres, touches dans la surface, dribbles,
+# tirs), eleve a ce poids. N'agit que si la composition est publiee.
+#
+# Mesure (`mesure_styles.py`, 2 318 matchs de sept championnats rejoues,
+# reglage sur les 60 % anciens, verdict sur 928 matchs recents) :
+#   onze aligne, taux par 90, poids 0.25   log-vraisemblance +0.0074 (t = +2.7),
+#                                          Brier du total 0.2244 -> 0.2236
+#   onze habituel                          -0.0005 (t = -0.2) : n'agit pas
+#   poids 1                                +0.0050 (t = +0.5) : trop fort
+POIDS_STYLES = 0.25
 
 
 class ModeleCorners(AvecStyles, ModeleParEquipe):
     cle = "corners"
-    version = "1.0.0"
+    version = "2.0.0"
     libelle = "Corners"
     champ = "corners"
     seuil = CORNERS_LINE

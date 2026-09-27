@@ -9,8 +9,8 @@ ce qu'elle rate, et ce qu'on a appris en la mesurant.
 | [moteur.md](moteur.md) | Socle commun : estimation Maher, lois, sélection des offres | 1.0.0 |
 | [buts.md](buts.md) | Buts | 2.0.0 |
 | [issue.md](issue.md) | Issue du match : 1X2, double chance, les deux marquent, scores exacts | 1.1.0 |
-| [corners.md](corners.md) | Corners | 1.0.0 |
-| [tirs_cadres.md](tirs_cadres.md) | Tirs cadrés | 1.0.0 |
+| [corners.md](corners.md) | Corners : styles des joueurs alignés | 2.0.0 |
+| [tirs_cadres.md](tirs_cadres.md) | Tirs cadrés | 1.0.1 |
 | [cartons_jaunes.md](cartons_jaunes.md) | Cartons jaunes : arbitre, joueurs, entraîneur | 2.0.0 |
 | [xg.md](xg.md) | Buts attendus (auxiliaire, jamais parié) | 1.0.0 |
 

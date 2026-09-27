@@ -18,15 +18,16 @@ CORRELATION = 0.0
 # descend sans direction nette. Pas de recalage.
 CALIBRATION = 1.0
 
-# Styles des joueurs alignes (`styles.py`) : facteur « onze du jour / onzes
-# de reference », eleve a ce poids. Mesure par `mesure_styles.py` ; voir le
-# journal pour le detail.
+# Styles des joueurs alignes (`styles.py`) : facteur « onze aligne / onzes de
+# reference » sur les tirs cadres par 90 minutes. Mesure (`mesure_styles.py`,
+# 928 matchs de test) : +0.0037 a poids 0.25, t = +1.2 -- dans le bruit.
+# Calcule et affiche dans la fiche, sans rien deplacer.
 POIDS_STYLES = 0.0
 
 
 class ModeleTirsCadres(AvecStyles, ModeleParEquipe):
     cle = "tirs_cadres"
-    version = "1.0.0"
+    version = "1.0.1"
     libelle = "Tirs cadres"
     champ = "tirs_cadres"
     seuil = SHOTS_LINE
