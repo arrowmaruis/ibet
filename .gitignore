@@ -1,17 +1,15 @@
 # Secrets
 .env
 
-# Cache local (quota API)
+# Donnees locales : bases, cache, exports, sauvegardes, certificats
+# (voir ibet/chemins.py). Ce sont des donnees, pas du code.
+donnees/
+
+# Anciens emplacements, avant le dossier donnees/ : ne jamais les versionner
+# s'ils reapparaissent (un ancien processus qui tournerait encore).
 .cache/
-
-# Bundle de certificats genere localement
 .certs/
-
-# Exports
-exports/
-*.csv
-*.json
-!package.json
+*.db
 
 # Python
 __pycache__/
@@ -20,18 +18,10 @@ __pycache__/
 venv/
 env/
 *.egg-info/
+build/
 
 # OS / IDE
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-
-# Base locale des previsions
-ibet.db
-
-# Sauvegardes datees de la base
-sauvegardes/
-
-# Bases SQLite (donnees locales)
-*.db

@@ -24,7 +24,7 @@ Kaspersky, ESET…) ou un proxy d'entreprise re-signe le trafic HTTPS avec sa pr
 que Python ne connaît pas. Correctif :
 
 ```bash
-python setup_ca.py
+python -m ibet certificats
 ```
 
 Le script fusionne les certificats publics avec l'autorité locale détectée et affiche la ligne
@@ -50,9 +50,9 @@ Source par défaut : c'est la seule qui donne, **sans aucune clé**, la totalit�
 jour avec leurs scores, leur statut en direct et leurs statistiques.
 
 ```bash
-python main.py                                       # tous les matchs du jour
-python main.py --date 2026-09-04 --league "Ligue 2"  # résultats d'hier
-python main.py --league "Premier League" --stats     # avec statistiques
+python -m ibet                                       # tous les matchs du jour
+python -m ibet --date 2026-09-04 --league "Ligue 2"  # résultats d'hier
+python -m ibet --league "Premier League" --stats     # avec statistiques
 ```
 
 Les noms de compétitions sont ceux de flashscore.fr, en français (`Ligue 1`, `Ligue des
@@ -89,10 +89,10 @@ l'endpoint des journées de championnat, **non plafonné** — une journée comp
 et statuts :
 
 ```bash
-python main.py --list-leagues                              # compétitions couvertes
-python main.py --league "Premier League" --round 4         # journée 4 entière
-python main.py --league "Ligue 1"  --date 2026-09-12       # journée détectée automatiquement
-python main.py --league ldc --round 6                      # alias acceptés
+python -m ibet --list-leagues                              # compétitions couvertes
+python -m ibet --league "Premier League" --round 4         # journée 4 entière
+python -m ibet --league "Ligue 1"  --date 2026-09-12       # journée détectée automatiquement
+python -m ibet --league ldc --round 6                      # alias acceptés
 ```
 
 Compétitions couvertes : Premier League, Ligue 1, La Liga, Serie A, Bundesliga, Ligue des
@@ -118,13 +118,13 @@ les plus proches plutôt qu'un simple « aucun résultat ».
 ## Utilisation
 
 ```bash
-python main.py                                            # matchs d'aujourd'hui
-python main.py --date 2026-09-10
-python main.py --date 2026-09-10 --league "Ligue 1"
-python main.py --date 2026-09-10 --export csv
-python main.py --provider football-data --date 2026-09-10 --export both
-python main.py --date 2026-09-10 --tz America/New_York
-python main.py --clear-cache
+python -m ibet                                            # matchs d'aujourd'hui
+python -m ibet --date 2026-09-10
+python -m ibet --date 2026-09-10 --league "Ligue 1"
+python -m ibet --date 2026-09-10 --export csv
+python -m ibet --provider football-data --date 2026-09-10 --export both
+python -m ibet --date 2026-09-10 --tz America/New_York
+python -m ibet --clear-cache
 ```
 
 ### Options
@@ -141,7 +141,7 @@ python main.py --clear-cache
 | `--backtest` | Rejoue les matchs terminés de la sélection et mesure la qualité du modèle |
 | `--open` | Ouvre la page Flashscore des matchs sélectionnés (5 onglets maximum) |
 | `--provider`, `-p` | `thesportsdb` \| `football-data` \| `api-football` |
-| `--export`, `-e` | `csv` \| `json` \| `both` → écrit dans `./exports/` |
+| `--export`, `-e` | `csv` \| `json` \| `both` → écrit dans `donnees/exports/` |
 | `--output`, `-o` | Chemin de sortie explicite (incompatible avec `--export both`) |
 | `--round`, `-r` | Affiche la journée N complète (nécessite `--league`) |
 | `--list-leagues` | Liste les compétitions du mode journée |
@@ -163,8 +163,8 @@ ont été relevés sur un jour complet du flux, soit 3 518 équipes, sans faux p
 Elles restent accessibles de deux façons :
 
 ```bash
-python main.py --team "Monchengladbach II"          # la recherche les vise
-python main.py --team Monchengladbach --all-teams   # tout conserver
+python -m ibet --team "Monchengladbach II"          # la recherche les vise
+python -m ibet --team Monchengladbach --all-teams   # tout conserver
 ```
 
 Rien n'est écarté en silence : le programme indique toujours combien de matchs il a mis de
@@ -177,7 +177,7 @@ côté, et si la recherche ne correspond **qu'à** des déclinaisons, il le dit 
 seul match :
 
 ```bash
-python main.py --date 2026-09-04 --team Boulogne --stats
+python -m ibet --date 2026-09-04 --team Boulogne --stats
 ```
 
 ```
@@ -229,7 +229,7 @@ L'adresse de chaque match figure dans la colonne `url` des exports, et `--open` 
 directement les pages concernées :
 
 ```bash
-python main.py --team Monchengladbach --open
+python -m ibet --team Monchengladbach --open
 ```
 
 Avant de conclure à une absence de données, vérifiez le statut : les statistiques n'existent
@@ -240,9 +240,9 @@ qu'une fois le match **terminé**. Un match encore « En cours » est ignoré pa
 `--form` donne, pour un match, l'historique récent des **deux** équipes :
 
 ```bash
-python main.py --team Monchengladbach --form         # 10 derniers matchs
-python main.py --team Monchengladbach --form 6       # 6 derniers
-python main.py --team Monchengladbach --form 6 --stats   # + moyennes détaillées
+python -m ibet --team Monchengladbach --form         # 10 derniers matchs
+python -m ibet --team Monchengladbach --form 6       # 6 derniers
+python -m ibet --team Monchengladbach --form 6 --stats   # + moyennes détaillées
 ```
 
 ```
@@ -283,7 +283,7 @@ entre parenthèses, et vaut parfois 0 en division inférieure.
 ### Prévision statistique
 
 ```bash
-python main.py --date 2026-09-06 --league "Ligue 1" --team "Marseille" --predict
+python -m ibet --date 2026-09-06 --league "Ligue 1" --team "Marseille" --predict
 ```
 
 ```
@@ -383,7 +383,7 @@ Deux garanties, vérifiées par les tests :
    jamais la moins probable de ses deux conditions, et une fourchette vaut exactement la
    différence des deux seuils qui la bornent.
 
-> Le bilan de `verify.py` ne porte que sur **les propositions retenues**, pas sur le tableau
+> Le bilan de `ibet/evaluation/verify.py` ne porte que sur **les propositions retenues**, pas sur le tableau
 > des marchés : y verser des paris à 50 % rendrait le taux de réussite illisible.
 
 ##### Le côté du marché mis en avant
@@ -491,11 +491,11 @@ par match reçoivent la même note, que ce soit en Premier League ou en troisiè
 mesure l'a établi — sur les fiches émises, le modèle n'atteignait 50 % de certitude que 7 fois
 sur 26, là où le marché va jusqu'à 90 %.
 
-`forces.py` construit l'échelle qui manquait sur **16 855 matchs et 2 551 équipes déjà en cache**
+`ibet/prevision/forces.py` construit l'échelle qui manquait sur **16 855 matchs et 2 551 équipes déjà en cache**
 (2003→2026), sans une requête de plus :
 
 ```bash
-python forces.py     # reconstruit forces.json (25 s)
+python -m ibet forces     # reconstruit forces.json (25 s)
 ```
 
 > ⚠️ **À relancer quand le cache grossit.** Un fichier de notes ne se périme pas
@@ -567,7 +567,7 @@ appliqué.
 
 Quand les cotes 1X2 sont connues à l'émission, le 1X2 publié — et ses propositions victoire, nul,
 double chance — est le mélange **10 % modèle, 90 % bookmaker** (marge de Shin retirée,
-`POIDS_MODELE_ISSUE` dans `modeles/buts.py`). Les nombres de buts attendus ne changent pas.
+`POIDS_MODELE_ISSUE` dans `ibet/modeles/buts.py`). Les nombres de buts attendus ne changent pas.
 
 Mesuré sur **1 784 matchs de 2026** appariés aux cotes de Bet365 (football-data.co.uk), le modèle
 rejoué avec les seules données d'avant chaque match :
@@ -632,7 +632,7 @@ continent, avec un effectif qui change.
 
 **Le garde-fou.** `forces.fraicheur()` compare le nombre de matchs dont les notes sont issues à
 ce que le cache contient. Au-delà de 10 % de retard, `forces.avertissement()` rend une phrase
-que `forecast.py` et `main.py --backtest` écrivent sur la sortie d'erreur **avant** de
+que `ibet/prevision/forecast.py` et `main.py --backtest` écrivent sur la sortie d'erreur **avant** de
 travailler — avant, parce qu'une fiche produite sur des notes périmées ne se rattrape pas :
 elle est enregistrée telle quelle et n'est jamais recalculée.
 
@@ -823,7 +823,7 @@ rejoue les matchs **terminés** de la sélection et compare ses probabilités à
 réellement produit :
 
 ```bash
-python main.py --date 2026-09-04 --backtest --quiet
+python -m ibet --date 2026-09-04 --backtest --quiet
 ```
 
 Deux précautions rendent la mesure honnête :
@@ -1038,13 +1038,13 @@ hasard.** Le seul réglage qui ressorte est le rétrécissement, et c'est celui 
 
 Le modèle de Maher ne connaît que des comptages passés. Tout ce qui les entoure —
 qui arbitre, sous quelle pluie, après combien de jours de repos, avec quel enjeu —
-se lit ailleurs. `context.py` rassemble ce contexte en **quatorze critères**,
+se lit ailleurs. `ibet/prevision/context.py` rassemble ce contexte en **quatorze critères**,
 relevés à l'émission et enregistrés avec la fiche.
 
 ```bash
-python main.py --date 2026-09-13 --team Coventry --predict     # critères affichés
-python main.py --date 2026-09-13 --team Coventry --predict --sans-contexte
-python forecast.py --majeures --max 8                          # fiches avec critères
+python -m ibet --date 2026-09-13 --team Coventry --predict     # critères affichés
+python -m ibet --date 2026-09-13 --team Coventry --predict --sans-contexte
+python -m ibet emettre --majeures --max 8                          # fiches avec critères
 curl http://localhost:8000/api/criteres                        # le catalogue
 ```
 
@@ -1054,7 +1054,7 @@ Trois façons, selon d'où on regarde :
 
 ```bash
 # 1. En console — sous les critères, avec le reste de la prévision
-python main.py --date 2026-09-13 --team "Manchester Utd" --predict
+python -m ibet --date 2026-09-13 --team "Manchester Utd" --predict
 
 # 2. Par l'API, sur une fiche déjà émise
 curl http://localhost:8000/api/predictions/0YOA44w3/composition
@@ -1209,7 +1209,7 @@ Les trois emplacements ne sont pas interchangeables, et c'est ce qui impose à
 #### Mesurer le contexte, sans se mentir
 
 ```bash
-python main.py --date 2026-09-05 --league "Premier League" --backtest --contexte --quiet
+python -m ibet --date 2026-09-05 --league "Premier League" --backtest --contexte --quiet
 ```
 
 Deux sources **ne peuvent pas** être ramenées à la date d'un match passé, et les
@@ -1332,7 +1332,7 @@ poids modifiés reste identifiable comme telle.
 
 ### Exemple de sortie
 
-`python main.py --league "Premier League" --round 4` :
+`python -m ibet --league "Premier League" --round 4` :
 
 ```
   10 match(s) - English Premier League - journee 4 (2026-2027)
@@ -1375,8 +1375,8 @@ Pour les matchs **terminés** : tirs cadrés, tirs totaux, corners, fautes, cart
 rouges, possession, et nom de l'arbitre.
 
 ```bash
-python main.py --league "serie a" --round 1 --date 2026-08-22 --stats
-python main.py --league "Ligue 1" --date 2026-09-12 --stats --max-stats 5 --export csv
+python -m ibet --league "serie a" --round 1 --date 2026-08-22 --stats
+python -m ibet --league "Ligue 1" --date 2026-09-12 --stats --max-stats 5 --export csv
 ```
 
 ```
@@ -1466,7 +1466,7 @@ Chaque match est normalisé de la même façon quel que soit le provider :
 
 ## Cache
 
-Chaque réponse est mise en cache dans `.cache/` sous une clé `provider|date|fuseau`, avec une
+Chaque réponse est mise en cache dans `donnees/cache/` sous une clé `provider|date|fuseau`, avec une
 durée de vie de `CACHE_TTL` secondes (1 h par défaut). Utile pour ne pas brûler les
 100 requêtes/jour d'API-Football pendant le développement.
 
@@ -1478,51 +1478,90 @@ durée de vie de `CACHE_TTL` secondes (1 h par défaut). Utile pour ne pas brûl
 
 ## Structure
 
+Le code est dans le paquet `ibet/`, les données dans `donnees/`, la documentation
+dans `docs/`. À la racine, il ne reste que la configuration.
+
 ```
-.
-├── .env                # clés API — jamais commité
-├── .env.example        # modèle à copier
-├── .gitignore
-├── main.py             # CLI (argparse)
-├── server.py           # API HTTP locale (FastAPI) pour le front
-├── api_client.py       # appels API + normalisation des providers
-├── predict.py          # chef d'orchestre de la prévision (fait travailler les modèles)
-├── modeles/            # un modèle dédié par événement
-│   ├── buts.py         #   buts (+ xG, notes globales, marchés sur le score)
-│   ├── issue.py        #   issue du match : 1X2, double chance, les deux marquent, scores exacts
-│   ├── corners.py      #   corners
-│   ├── tirs_cadres.py  #   tirs cadrés
-│   ├── cartons.py      #   cartons jaunes
-│   ├── xg.py           #   buts attendus (auxiliaire : estimé, jamais parié)
-│   ├── base.py         #   contrat commun d'un modèle d'événement
-│   ├── estimation.py   #   moteur Maher partagé (attaque / défense)
-│   ├── lois.py         #   lois de comptage et loi jointe
-│   ├── offres.py       #   sélection des propositions, tableau des marchés
-│   ├── reglages.py     #   Params et réglages du moteur
-│   └── journal/        #   une fiche par modèle : versions, points forts / faibles, mesures
-├── context.py          # les 14 critères de décision autour du modèle
-├── store.py            # base SQLite des prévisions (ibet.db)
-├── forecast.py         # émission des prévisions des matchs à venir
-├── verify.py           # confrontation des prévisions aux résultats réels
-├── rattrapage.py       # retrouve les résultats sortis de la fenêtre de la source
-├── etude.py            # compare ce que chaque version de chaque modèle a donné
-├── backtest.py         # évaluation du modèle sur des matchs déjà joués
-├── marche.py           # valeur des paris face au marché, sélection, rendement
-├── criteres.py         # mesure prospective des critères laissés à poids zéro
-├── forces.py           # notes d'attaque/défense sur échelle commune (forces.json)
-├── exporter.py         # export CSV/JSON + rendu console
-├── cache.py            # cache disque JSON
-├── setup_ca.py         # bundle de certificats (antivirus/proxy HTTPS)
-├── test_stats.py       # tests du parseur et du modèle (sans réseau)
+iBET/
+├── ibet/                       # le code, un dossier par étape
+│   ├── __main__.py             #   point d'entrée : python -m ibet <commande>
+│   ├── chemins.py              #   seul module qui sait où sont les données
+│   ├── sources/                # d'où viennent les données
+│   │   ├── api_client.py       #   flux des matchs, stats, forme, feuilles de match
+│   │   ├── cache.py            #   cache disque des réponses (donnees/cache/)
+│   │   └── certificats.py      #   bundle de certificats (antivirus / proxy HTTPS)
+│   ├── stockage/               # où elles sont gardées
+│   │   ├── store.py            #   base SQLite des prévisions (donnees/ibet.db)
+│   │   └── arbitres.py         #   base des arbitres (donnees/arbitres.db)
+│   ├── collecte/               # ce qui remplit le stockage après coup
+│   │   ├── resultats.py        #   résultats sortis de la fenêtre de la source
+│   │   ├── feuilles.py         #   feuilles de match (arbitres, cartons, minutes)
+│   │   └── joueurs.py          #   statistiques par joueur
+│   ├── modeles/                # un modèle dédié par événement
+│   │   ├── buts.py, issue.py, corners.py, tirs_cadres.py, cartons.py, xg.py
+│   │   ├── discipline.py       #   arbitres, joueurs, entraîneurs (cartons)
+│   │   ├── styles.py           #   styles de jeu des joueurs (corners, tirs)
+│   │   ├── base.py             #   contrat commun d'un modèle d'événement
+│   │   ├── estimation.py, lois.py, offres.py, reglages.py   # moteur commun
+│   │   └── journal/            #   une fiche par modèle : versions, forces, faiblesses
+│   ├── prevision/              # ce qui fait travailler les modèles
+│   │   ├── predict.py          #   chef d'orchestre de la prévision
+│   │   ├── context.py          #   les 14 critères de décision
+│   │   ├── forces.py           #   notes attaque / défense (donnees/forces.json)
+│   │   ├── forecast.py         #   émission et enregistrement des fiches
+│   │   └── marche.py           #   valeur face au marché, sélection, rendement
+│   ├── evaluation/             # ce qui juge les prévisions
+│   │   ├── verify.py           #   confrontation aux résultats réels
+│   │   ├── backtest.py         #   banc d'essai sur des matchs déjà joués
+│   │   ├── etude.py            #   comparaison des versions de chaque modèle
+│   │   ├── criteres.py         #   mesure des critères laissés à poids zéro
+│   │   └── mesure_cartons.py, mesure_styles.py
+│   └── interfaces/             # ce que l'on appelle
+│       ├── cli.py              #   ligne de commande principale
+│       ├── serveur.py          #   API HTTP pour le front (FastAPI)
+│       ├── exporter.py         #   export CSV / JSON, rendu console
+│       └── catalogue.py        #   styles de jeu par équipe
+├── tests/test_stats.py         # tests (sans réseau) : python -m ibet tests
+├── donnees/                    # données locales, hors git (voir ibet/chemins.py)
+│   ├── ibet.db, arbitres.db, forces.json, predictions_ouvertes.json
+│   └── cache/, exports/, sauvegardes/, certificats/
+├── docs/
+│   ├── donnees.md              # système d'information : stockage, risques, migrations
+│   └── progression.md          # suivi de progression
+├── .env / .env.example         # clés et réglages (.env jamais commité)
+├── pyproject.toml              # description du projet, réglage d'isort
 ├── requirements.txt
-├── DONNEES.md          # système d'information : stockage, risques, migrations
-├── PROGRESS.md         # suivi de progression
 └── README.md
 ```
 
+Les dépendances vont de haut en bas de `ibet/` : `sources` ne connaît rien
+d'autre, `modeles` ne lit ni le réseau ni la base, `interfaces` peut tout
+appeler. Un nouveau fichier se range selon cette question : *à quelle étape
+sert-il ?*
+
+### Commandes
+
+Toutes passent par `python -m ibet`, lancé depuis la racine du projet
+(`python -m ibet aide` pour la liste) :
+
+| Commande | Rôle |
+|---|---|
+| `python -m ibet [options]` | matchs, stats, forme, prévision, backtest, valeur (ex-`main.py`) |
+| `python -m ibet serveur` | API pour le front, port 8000, rechargement auto |
+| `python -m ibet emettre` | émet et enregistre les prévisions des matchs à venir |
+| `python -m ibet verifier` | tranche les prévisions dont le match est fini |
+| `python -m ibet etude` | compare les versions des modèles |
+| `python -m ibet forces` | reconstruit les notes attaque / défense |
+| `python -m ibet rattraper` / `rattraper-feuilles` / `rattraper-joueurs` | collecte après coup |
+| `python -m ibet catalogue` | styles de jeu des joueurs |
+| `python -m ibet mesurer-cartons` / `mesurer-styles` | mesures des apports |
+| `python -m ibet base` | crée les tables, importe l'historique |
+| `python -m ibet certificats` | bundle de certificats |
+| `python -m ibet tests` | tests |
+
 Ce que chaque chose **stocke**, ce qui est reconstituable et ce qui ne l'est pas,
 et les tables qu'il reste à poser pour que le modèle sache prévoir sans réseau :
-voir [DONNEES.md](DONNEES.md). Deux points y sont signalés comme urgents — le
+voir [docs/donnees.md](docs/donnees.md). Deux points y sont signalés comme urgents — le
 dossier n'est pas versionné et n'a aucune sauvegarde, alors que `ibet.db` porte
 20 663 résultats que la source ne republie plus ; et `CREATE TABLE IF NOT EXISTS`
 ne migre rien, donc toute évolution du schéma est aujourd'hui silencieusement
@@ -1540,12 +1579,12 @@ Projets/
 
 `../ibet-web/` est un projet Vue 3 indépendant, avec son propre dépôt de
 dépendances et son propre build : il ne récupère rien lui-même, il lit l'API
-HTTP locale servie par `server.py`, qui expose les mêmes matchs normalisés que
+HTTP locale servie par `ibet/interfaces/serveur.py`, qui expose les mêmes matchs normalisés que
 le CLI, depuis le même cache.
 
 ```bash
 # depuis ce projet
-uvicorn server:app --reload --port 8000        # 1. l'API
+python -m ibet serveur        # 1. l'API
 
 # depuis le dossier voisin
 cd ../ibet-web && npm install && npm run dev   # 2. le front (http://localhost:5173)
@@ -1575,19 +1614,19 @@ Voir `../ibet-web/README.md` pour l'architecture du front et son design system.
 
 ## Émettre des prévisions
 
-`forecast.py` prend les matchs **à venir**, applique le modèle et écrit une
+`ibet/prevision/forecast.py` prend les matchs **à venir**, applique le modèle et écrit une
 fiche en base — datée, avec le réglage employé et les propositions engagées.
 
 ```bash
-python forecast.py --majeures --max 8                    # les matchs du jour qui comptent
-python forecast.py --date 2026-09-08 --league "Ligue des Champions - Phase" --max 6
-python forecast.py --jours 3 --league Championship --pays Angleterre
+python -m ibet emettre --majeures --max 8                    # les matchs du jour qui comptent
+python -m ibet emettre --date 2026-09-08 --league "Ligue des Champions - Phase" --max 6
+python -m ibet emettre --jours 3 --league Championship --pays Angleterre
 ```
 
 | Option | Effet |
 |---|---|
 | `--date` / `--jours N` | jour de départ et nombre de journées couvertes |
-| `--majeures` | ne retient que les grandes compétitions européennes (12 couvertes, liste dans `forecast.py`) |
+| `--majeures` | ne retient que les grandes compétitions européennes (12 couvertes, liste dans `ibet/prevision/forecast.py`) |
 | `--league` / `--pays` | filtres par sous-chaîne. **Le pays est souvent indispensable** : « Championship » ramène aussi la Motsepe Championship sud-africaine, « Ligue 1 » la tunisienne et l'algérienne |
 | `--max N` | plafond de prévisions émises (défaut : 10) |
 | `--refaire` | réémet un match déjà en base (remplace sa fiche) |
@@ -1604,7 +1643,7 @@ n'est pas une API publiée et ses CGU demandent un volume raisonnable. Le cache
 absorbe les répétitions : deux matchs d'une même compétition partagent toute la
 référence.
 
-`forecast.py` met en **fiche** ce que `predict.py` calcule. La distinction n'est
+`ibet/prevision/forecast.py` met en **fiche** ce que `ibet/prevision/predict.py` calcule. La distinction n'est
 pas cosmétique : le résultat du modèle change d'un jour à l'autre (l'historique
 s'allonge, la référence bouge), alors que la fiche est datée et figée. C'est ce
 qui permet de la confronter au résultat réel sans qu'elle ait pu être réécrite
@@ -1614,14 +1653,14 @@ entre-temps.
 
 Une prévision attend la fin de son match. Tant qu'il n'est pas joué il n'y a rien
 à trancher ; une fois joué, la laisser en attente reviendrait à s'épargner le
-verdict. `verify.py` va chercher le score et les statistiques réelles, puis
+verdict. `ibet/evaluation/verify.py` va chercher le score et les statistiques réelles, puis
 tranche chaque proposition — **sans jamais retoucher les probabilités
 annoncées** : seul le champ `verifie` est renseigné.
 
 ```bash
-python verify.py            # les fiches de la base dont le match est fini
-python verify.py --toutes   # y compris celles dont le match n'a pas commencé
-python verify.py --json     # le fichier historique predictions_ouvertes.json
+python -m ibet verifier            # les fiches de la base dont le match est fini
+python -m ibet verifier --toutes   # y compris celles dont le match n'a pas commencé
+python -m ibet verifier --json     # le fichier historique predictions_ouvertes.json
 ```
 
 Seules les fiches **mûres** sont examinées : coup d'envoi + 135 minutes (90 de
@@ -1709,10 +1748,10 @@ la source. Une fois émise, elle est donc écrite dans `ibet.db` (SQLite, un
 fichier, aucune installation) et n'est plus jamais recalculée.
 
 ```bash
-python store.py     # crée les tables et importe predictions_ouvertes.json
+python -m ibet base     # crée les tables et importe predictions_ouvertes.json
 ```
 
-La commande est idempotente : la relancer après un passage de `verify.py`
+La commande est idempotente : la relancer après un passage de `ibet/evaluation/verify.py`
 resynchronise les résultats réels et le sort de chaque proposition.
 
 | Table | Contenu |
@@ -1724,7 +1763,7 @@ resynchronise les résultats réels et le sort de chaque proposition.
 
 Le `payload` est conservé **tel quel**, sans réécriture : une prévision est un
 engagement pris à une date, avec un réglage donné. La relire modifiée lui ôterait
-toute valeur — c'est le principe qui fait déjà que `verify.py` tranche sans
+toute valeur — c'est le principe qui fait déjà que `ibet/evaluation/verify.py` tranche sans
 retoucher les probabilités annoncées.
 
 Le taux de réussite n'est calculé que sur les propositions **tranchées** :
@@ -1736,13 +1775,13 @@ rapporter les réussites au total ferait passer une prévision en attente pour u
 La source ne publie une journée que **sept jours** autour d'aujourd'hui. Passé
 ce délai, une fiche non vérifiée ne se tranche plus : elle ne compte ni en
 réussite ni en échec, et disparaît de toute mesure. Le projet a perdu **onze
-fiches — 264 propositions** de cette façon, faute d'avoir lancé `verify.py`
+fiches — 264 propositions** de cette façon, faute d'avoir lancé `ibet/evaluation/verify.py`
 pendant deux semaines.
 
 La parade n'est pas de vérifier plus souvent — ça reste une discipline, et une
 discipline finit toujours par céder. C'est de **ne plus dépendre du moment où
 on le fait** : dès qu'un match terminé passe sous les yeux du programme, son
-score entre dans la table `resultats`. `verify.py` lit ensuite l'archive, et
+score entre dans la table `resultats`. `ibet/evaluation/verify.py` lit ensuite l'archive, et
 n'interroge la source que si l'archive ne sait pas.
 
 Les points de capture sont ceux qui récupéraient déjà une journée, donc la
@@ -1750,10 +1789,10 @@ parade ne coûte **aucune requête supplémentaire** :
 
 | Appelant | Quand |
 |---|---|
-| `main.py` | à chaque journée affichée en ligne de commande |
-| `server.py` | à chaque journée servie au front — le point le plus fréquent |
-| `forecast.py` | à l'émission des prévisions |
-| `verify.py` | à la vérification, plus les fiches statistiques au passage |
+| `ibet/interfaces/cli.py` | à chaque journée affichée en ligne de commande |
+| `ibet/interfaces/serveur.py` | à chaque journée servie au front — le point le plus fréquent |
+| `ibet/prevision/forecast.py` | à l'émission des prévisions |
+| `ibet/evaluation/verify.py` | à la vérification, plus les fiches statistiques au passage |
 
 L'archive est volontairement **indépendante des fiches** : on garde le résultat
 même d'un match sur lequel aucune prévision n'a été émise. Ça ne coûte rien, et
@@ -1766,7 +1805,7 @@ fiche sur un 0-0 de la vingtième minute serait une erreur silencieuse, pire que
 le trou qu'on cherche à combler.
 
 ```bash
-python store.py     # crée les tables, importe l'historique, reprend le cache
+python -m ibet base     # crée les tables, importe l'historique, reprend le cache
 ```
 
 La reprise verse dans l'archive tout ce que le cache des requêtes contient
@@ -1777,7 +1816,7 @@ au-delà de la fenêtre de sept jours.
 ### Rattraper ce qui est déjà sorti de la fenêtre
 
 L'archive empêche la perte de se reproduire, mais elle ne peut rien pour ce qui
-n'a jamais été téléchargé. `rattrapage.py` est la voie de retour, et elle tient
+n'a jamais été téléchargé. `ibet/collecte/resultats.py` est la voie de retour, et elle tient
 à une particularité du flux : **l'historique d'une équipe remonte des mois**.
 Un match du 13 septembre n'est plus dans la journée du 13 septembre, mais il
 reste dans la forme récente de ses deux équipes.
@@ -1788,8 +1827,8 @@ pas — il faut passer par un match *voisin* de l'une de ses équipes, que ce m�
 historique vient justement de nommer. D'où les deux passes.
 
 ```bash
-python rattrapage.py              # toutes les fiches en attente sans résultat
-python rattrapage.py --limite 5   # s'arrêter après cinq fiches
+python -m ibet rattraper              # toutes les fiches en attente sans résultat
+python -m ibet rattraper --limite 5   # s'arrêter après cinq fiches
 ```
 
 Sur les 18 fiches que la source ne rendait plus, le rattrapage a retrouvé les
@@ -1848,7 +1887,7 @@ la ligne de commande : `run_backtest` appelait `predict.build()` sans transmettr
 `params`, et `backtest.tune` ne servait qu'à comparer avec et sans contexte.
 
 ```bash
-python main.py --date 2026-09-06 --pays Angleterre --stats \
+python -m ibet --date 2026-09-06 --pays Angleterre --stats \
                --backtest --contexte --regler xg_echantillon=0,3,6,12
 ```
 
@@ -1872,10 +1911,10 @@ produit un banc d'essai vide de sens avant d'être trouvé.
 **`--league` est une sous-chaîne sur une couverture mondiale.** `"Premier
 League"` ramène l'Ukraine, le Rwanda, la Russie, Malte, le Lesotho, le
 Kazakhstan, Hong Kong, le Ghana et le Canada autant que l'Angleterre. D'où
-`--pays`, la même option que `forecast.py` :
+`--pays`, la même option que `ibet/prevision/forecast.py` :
 
 ```bash
-python main.py --date 2026-09-06 --league "Premier League" --pays Angleterre
+python -m ibet --date 2026-09-06 --league "Premier League" --pays Angleterre
 ```
 
 `--round`, qui résout le nom canonique vers l'*English Premier League*, ne peut
@@ -2076,8 +2115,8 @@ vers les 0-0 et 1-1, donc vers le nul. Le juger sur l'issue était correct.
 ## Ce que les fiches émises ont appris (`--bilan`)
 
 ```bash
-python main.py --bilan      # lit la base, sans réseau ni date
-python main.py --valeur     # où se servir du modèle, aux cotes du moment
+python -m ibet --bilan      # lit la base, sans réseau ni date
+python -m ibet --valeur     # où se servir du modèle, aux cotes du moment
 ```
 
 Les mêmes mesures sont exposées à l'interface web : `GET /api/bilan` (lecture
