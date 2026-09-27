@@ -4,7 +4,81 @@ Fichier : `ibet/modeles/corners.py`. Clé : `corners`.
 
 ---
 
-## 2.0.0 — en service depuis le 2026-09-27
+## 3.0.0 — en service depuis le 2026-09-27
+
+**Changement** : le nombre attendu de chaque équipe est corrigé par les **cotes
+1X2 du marché** d'avant-match, avant le facteur des styles (inchangé depuis la
+2.0.0). La correction est une régression de Poisson mesurée sur une nouvelle
+source : l'**historique long** de football-data.co.uk (sept championnats depuis
+2012-13, table `historique`, `python -m ibet historique`).
+**Pourquoi** : deux défauts notés depuis la 1.0.0. L'estimation est **trop
+étalée** : dix matchs d'historique surestiment les écarts entre équipes. Et le
+modèle ne sait pas qui va **dominer** le match, alors que le favori obtient les
+corners de sa domination. Le marché sait les deux.
+**Mesure avant adoption** : `python -m ibet mesurer-historique`, rejeu
+chronologique de 30 394 matchs avec corners et cotes. Coefficients ajustés sur
+2012-13 à 2022-23 (22 988 matchs), verdict sur 2023-24 à 2026-27 (7 406 matchs),
+contre un estimateur calqué sur le moteur (dix derniers matchs, régularisation
+22) :
+
+| Variante (test) | Écart log-vraisemblance | t | Brier total | Brier équipe | Pente réel / prévu |
+|---|---|---|---|---|---|
+| référence (≈ moteur) | — | — | 0.2224 | 0.2008 | 0.78 |
+| historique profond (profil sur deux saisons) | +0.0283 | +5.3 | 0.2239 | 0.1966 | 0.53 |
+| **marché, 1X2 seul (retenu)** | **+0.0688** | **+16.0** | **0.2219** | **0.1930** | **1.08** |
+| marché, 1X2 + plus / moins 2,5 buts | +0.0697 | +16.2 | 0.2217 | 0.1929 | 1.06 |
+| historique profond + marché | +0.0765 | +16.6 | 0.2209 | 0.1925 | 1.07 |
+
+Le gain vaut dans les sept championnats (de +0.040 en Liga à +0.10 aux
+Pays-Bas). C'est dix fois celui des styles des joueurs (+0.0074).
+
+### Ce que fait la version
+- **Correction du marché** (`ibet/modeles/apports.py`), probabilités 1X2
+  moyennes, marge retirée proportionnellement :
+  `log λ' = a + b·log λ + c·(p_équipe − p_adversaire)`.
+  Domicile : a = 0.619, b = 0.588, c = 0.437. Extérieur : a = 0.540,
+  b = 0.670, c = 0.395. Bornée à [λ/1.6 ; 1.6·λ].
+- b ≈ 0.6 ramène les écarts de l'historique vers la moyenne, là où le
+  moteur les exagérait. Avec c ≈ 0.44, un favori à 70 % contre 12 % obtient
+  environ 29 % de corners de plus qu'à cotes égales.
+- **Styles des onze** : inchangés (poids 0.25, onze aligné seulement),
+  appliqués après le marché.
+- **Sans cotes** (match rejoué, source muette), rien ne change : le modèle
+  vaut alors la 2.0.0.
+- Trace dans la fiche : clé `apports` (`marche`, `styles`).
+
+### Points forts
+- Plus gros gain mesuré sur les corners depuis le versionnage, stable d'un
+  championnat à l'autre, sur 7 406 matchs qu'aucun réglage n'a vus.
+- Corrige l'étalement : pente 0.78 → 1.08 (la cible est 1).
+
+### Points faibles
+- **Estimateur de référence approché** : les coefficients ont été ajustés sur
+  un Maher reconstruit (dix matchs, régularisation 22), pas sur le λ exact du
+  moteur (référence de compétition Flashscore, contexte). Même échelle, mais à
+  vérifier sur les fiches tranchées.
+- **Cotes d'ouverture** : la source donne des cotes relevées en début de
+  semaine, le projet celles du jour. Les secondes en savent plus (compositions,
+  blessures) ; l'effet ne peut qu'être au moins aussi bon, mais n'est pas mesuré.
+- **Sept championnats** : ailleurs, les mêmes coefficients s'appliquent sans
+  avoir été mesurés.
+
+### Pistes pour la suite
+- **Historique profond** : +0.007 de plus par-dessus le marché ; demande une
+  table de correspondance des noms d'équipes entre football-data.co.uk et
+  Flashscore (« Man United » / « Manchester Utd »).
+- Re-ajuster les coefficients sur le λ du moteur lui-même, avec le backtest
+  apparié, quand assez de fiches émises porteront des cotes.
+
+### Mesures en service
+Pas encore de fiche tranchée en 3.0.0.
+
+| Période | Matchs | Props | Annoncé | Observé | Écart | Brier |
+|---|---|---|---|---|---|---|
+
+---
+
+## 2.0.0 — retirée le 2026-09-27
 
 **Changement** : le modèle reçoit les **styles des joueurs alignés**, tirés
 d'une nouvelle source : les statistiques par joueur et par match de Flashscore

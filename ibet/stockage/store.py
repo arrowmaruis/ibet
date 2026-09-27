@@ -154,6 +154,30 @@ CREATE TABLE IF NOT EXISTS stats_joueurs (
     PRIMARY KEY (match_id, joueur_id)
 );
 
+-- Historique long des grands championnats (football-data.co.uk,
+-- `ibet/collecte/historique.py`) : une ligne par match, depuis 2012, avec les
+-- statistiques d'equipe et les cotes MOYENNES du marche avant le match
+-- (ouverture et cloture). Noms d'equipes tels que la source les ecrit
+-- (« Man United »), qui ne sont pas ceux de Flashscore.
+CREATE TABLE IF NOT EXISTS historique (
+    championnat   TEXT NOT NULL,
+    saison        TEXT NOT NULL,
+    date          TEXT NOT NULL,
+    domicile      TEXT NOT NULL,
+    exterieur     TEXT NOT NULL,
+    arbitre       TEXT NOT NULL DEFAULT '',
+    buts_dom      INTEGER, buts_ext      INTEGER,
+    tirs_dom      INTEGER, tirs_ext      INTEGER,
+    cadres_dom    INTEGER, cadres_ext    INTEGER,
+    corners_dom   INTEGER, corners_ext   INTEGER,
+    jaunes_dom    INTEGER, jaunes_ext    INTEGER,
+    cote_dom      REAL, cote_nul REAL, cote_ext REAL,
+    cote_plus25   REAL, cote_moins25 REAL,
+    cloture_dom   REAL, cloture_nul REAL, cloture_ext REAL,
+    PRIMARY KEY (championnat, date, domicile)
+);
+
+CREATE INDEX IF NOT EXISTS idx_historique_date ON historique(championnat, date);
 CREATE INDEX IF NOT EXISTS idx_stats_joueurs_joueur ON stats_joueurs(joueur_id);
 CREATE INDEX IF NOT EXISTS idx_stats_joueurs_equipe ON stats_joueurs(equipe);
 CREATE INDEX IF NOT EXISTS idx_matchs_joueurs_date ON matchs_joueurs(championnat, date);

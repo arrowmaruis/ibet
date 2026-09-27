@@ -359,11 +359,14 @@ def build(
     # (modele 2.0.0). Sans contexte, rien : le modele est alors le 1.0.0.
     if collecte is not None and collecte.get("discipline"):
         apports[CARTONS_JAUNES.cle] = collecte["discipline"]
-    # Corners et tirs cadres recoivent les styles des onze du jour
-    # (`modeles/styles.py`). Sans contexte, rien.
-    if collecte is not None and collecte.get("styles"):
-        apports[CORNERS.cle] = collecte["styles"].get("corners")
-        apports[TIRS_CADRES.cle] = collecte["styles"].get("tirs_cadres")
+    # Corners et tirs cadres recoivent les cotes 1X2 du marche et les styles
+    # des onze du jour (`modeles/apports.py`). Sans l'un ni l'autre, rien.
+    marche_1x2 = apports[BUTS.cle]["marche"]
+    styles_du_jour = (collecte or {}).get("styles") or {}
+    for modele in (CORNERS, TIRS_CADRES):
+        if marche_1x2 or styles_du_jour.get(modele.cle):
+            apports[modele.cle] = {"marche": marche_1x2,
+                                   "styles": styles_du_jour.get(modele.cle)}
 
     # --- Seconde phase : chaque modele corrige, puis prevoit ---------------
     prediction: dict[str, Any] = {

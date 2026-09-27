@@ -2879,8 +2879,26 @@ def main(argv: list[str] | None = None) -> int:
     check("l'onze habituel ne deplace rien",
           st.appliquer((5.0, 4.0), {"domicile": {"facteur": 1.2, "source": "habituel"}}, 1.0)[0], 5.0)
     check("l'onze aligne deplace les corners au poids mesure",
-          round(CORNERS.ajuster((5.0, 4.0), {"domicile": {"facteur": 1.2, "source": "aligne"}})[0], 4),
+          round(CORNERS.ajuster((5.0, 4.0), {"styles": {"domicile": {"facteur": 1.2, "source": "aligne"}}})[0], 4),
           round(5.0 * 1.2 ** CORNERS.poids_styles, 4))
+
+    print("\nZ8. Cotes du marche : corners et tirs cadres")
+    from ibet.modeles.apports import corriger_par_le_marche
+    equilibre = {"domicile": 0.36, "nul": 0.28, "exterieur": 0.36}
+    favori = {"domicile": 0.70, "nul": 0.18, "exterieur": 0.12}
+    ld_eq, le_eq, _ = CORNERS.ajuster((5.0, 5.0), {"marche": equilibre})
+    ld_fav, le_fav, trace = CORNERS.ajuster((5.0, 5.0), {"marche": favori})
+    check("le favori obtient plus de corners", ld_fav > ld_eq and le_fav < le_eq, True)
+    haut = CORNERS.ajuster((8.0, 4.5), {"marche": equilibre})[0]
+    check("le marche resserre un historique extreme vers la moyenne", haut < 8.0, True)
+    check("la trace dit d'ou vient le deplacement", sorted(trace), ["marche"])
+    check("sans cotes, le marche ne deplace rien",
+          corriger_par_le_marche((5.0, 4.0), None, CORNERS.coefs_marche)[0], (5.0, 4.0))
+    check("la correction est bornee",
+          corriger_par_le_marche((20.0, 0.5), favori, CORNERS.coefs_marche)[0][0] >= 20.0 / 1.6, True)
+    check("tirs cadres : le favori cadre davantage",
+          TIRS_CADRES.ajuster((4.0, 4.0), {"marche": favori})[0]
+          > TIRS_CADRES.ajuster((4.0, 4.0), {"marche": equilibre})[0], True)
     check("sans apport, corners et tirs cadres inchanges",
           (CORNERS.ajuster((5.0, 4.0), None)[:2], TIRS_CADRES.ajuster((4.0, 3.0), None)[:2]),
           ((5.0, 4.0), (4.0, 3.0)))

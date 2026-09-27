@@ -4,7 +4,49 @@ Fichier : `ibet/modeles/tirs_cadres.py`. Clé : `tirs_cadres`.
 
 ---
 
-## 1.0.1 — en service depuis le 2026-09-27
+## 2.0.0 — en service depuis le 2026-09-27
+
+**Changement** : même correction que les corners 3.0.0 : les **cotes 1X2 du
+marché** corrigent le nombre attendu de chaque équipe (`ibet/modeles/apports.py`),
+coefficients mesurés sur l'historique long (football-data.co.uk). Le facteur
+des styles reste affiché à poids 0.
+**Pourquoi** : le favori cadre plus de tirs que son historique ne le dit, et
+dix matchs d'historique ne suffisent pas à fixer le niveau d'une équipe.
+**Mesure avant adoption** : `python -m ibet mesurer-historique --grandeur
+tirs_cadres`, réglage 2012-13 à 2022-23 (22 988 matchs), verdict 2023-24 à
+2026-27 (7 406 matchs) :
+
+| Variante (test) | Écart log-vraisemblance | t | Brier total | Brier équipe | Pente |
+|---|---|---|---|---|---|
+| référence (≈ moteur) | — | — | 0.1965 | 0.2000 | 1.05 |
+| **marché, 1X2 seul (retenu)** | **+0.0827** | **+17.0** | **0.1959** | **0.1899** | **1.16** |
+| marché, 1X2 + plus / moins 2,5 buts | +0.0999 | +18.4 | 0.1933 | 0.1887 | 0.92 |
+| historique profond + marché | +0.1009 | +17.2 | 0.1927 | 0.1885 | 0.91 |
+
+### Ce que fait la version
+- `log λ' = a + b·log λ + c·(p_équipe − p_adversaire)` ; domicile a = 0.181,
+  b = 0.819, c = 0.498 ; extérieur a = 0.254, b = 0.846, c = 0.472. Bornée à
+  [λ/1.6 ; 1.6·λ]. Sans cotes, rien ne change.
+
+### Points faibles
+- **La cote plus / moins 2,5 buts vaudrait +0.017 de plus**, mais le projet ne
+  relève que le 1X2 avant les matchs. La pente de 1.16 montre que le 1X2 seul
+  sur-corrige légèrement.
+
+### Pistes pour la suite
+- Relever la cote plus / moins 2,5 buts (the-odds-api, marché `totals`) et
+  passer aux coefficients complets : domicile (0.455, 0.642, 0.479, +0.615 sur
+  p(+2.5) − 0.5), extérieur (0.425, 0.718, 0.500, +0.460).
+
+### Mesures en service
+Pas encore de fiche tranchée en 2.0.0.
+
+| Période | Matchs | Props | Annoncé | Observé | Écart | Brier |
+|---|---|---|---|---|---|---|
+
+---
+
+## 1.0.1 — retirée le 2026-09-27
 
 **Changement** : la fiche affiche le facteur des **styles des joueurs alignés**
 (clé `styles`), sans rien déplacer : poids **0**. Aucune probabilité ne change.

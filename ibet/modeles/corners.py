@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from .apports import AvecApports
 from .base import ModeleParEquipe
-from .styles import AvecStyles
 
 CORNERS_LINE = 9.5
 
@@ -49,10 +49,28 @@ CALIBRATION = 1.0
 #   poids 1                                +0.0050 (t = +0.5) : trop fort
 POIDS_STYLES = 0.25
 
+# --- 3.0.0 : cotes du marche (voir `apports.py`) ------------------------------
+#
+# log lambda' = a + b.log lambda + c.(p_equipe - p_adversaire), probabilites 1X2
+# du marche, marge retiree. Regression de Poisson sur l'historique long
+# (football-data.co.uk, sept championnats, 22 988 matchs de 2012-13 a 2022-23).
+#
+# Mesure (`mesure_historique.py`, 7 406 matchs de 2023-24 a 2026-27, jamais
+# vus au reglage), contre un estimateur calque sur le moteur :
+#   log-vraisemblance +0.0688 par match (t = +16.0), Brier du total
+#   0.2224 -> 0.2219, Brier par equipe 0.2008 -> 0.1930, pente du reel sur le
+#   prevu 0.78 -> 1.08. La cote plus / moins 2,5 buts n'ajoute rien (+0.0009).
+# b < 1 resserre les ecarts de dix matchs d'historique ; c > 0 donne au favori
+# les corners que sa domination promet.
+COEFS_MARCHE = {
+    "domicile": (0.6189, 0.5875, 0.4368),
+    "exterieur": (0.5398, 0.6695, 0.3950),
+}
 
-class ModeleCorners(AvecStyles, ModeleParEquipe):
+
+class ModeleCorners(AvecApports, ModeleParEquipe):
     cle = "corners"
-    version = "2.0.0"
+    version = "3.0.0"
     libelle = "Corners"
     champ = "corners"
     seuil = CORNERS_LINE
@@ -64,3 +82,4 @@ class ModeleCorners(AvecStyles, ModeleParEquipe):
     correlation = CORRELATION
     calibration = CALIBRATION
     poids_styles = POIDS_STYLES
+    coefs_marche = COEFS_MARCHE

@@ -351,28 +351,3 @@ def appliquer(
         trace[cote] = dict(bloc, facteur_applique=round(applique, 3))
     trace["lambda_avant_styles"] = (round(lam[0], 2), round(lam[1], 2))
     return resultat[0], resultat[1], trace
-
-
-class AvecStyles:
-    """Melange pour un `ModeleParEquipe` qui recoit les styles des onze.
-
-    `ajuster` applique le facteur ; `prevoir` range sa trace sous « styles » et
-    garde les forces d'equipe sous « forces » -- les deux comptent : les forces
-    disent d'ou vient le nombre attendu, les styles ce qui l'a deplace.
-    """
-
-    poids_styles = 0.0
-
-    def ajuster(self, lam, apports):
-        return appliquer(lam, apports, self.poids_styles)
-
-    def prevoir(self, estimation, teams, baseline, params, correction=None,
-                with_candidates=False, apports=None):
-        entry = super().prevoir(estimation, teams, baseline, params, correction,
-                                with_candidates, apports)
-        if apports:
-            from .estimation import forces_des_equipes
-
-            entry["styles"] = entry.pop("forces")
-            entry["forces"] = forces_des_equipes(baseline, teams, self.champ, params)
-        return entry
