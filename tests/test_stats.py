@@ -2884,7 +2884,7 @@ def main(argv: list[str] | None = None) -> int:
           round(CORNERS.ajuster((5.0, 4.0), {"styles": {"domicile": {"facteur": 1.2, "source": "aligne"}}})[0], 4),
           round(5.0 * 1.2 ** CORNERS.poids_styles, 4))
 
-    print("\nZ9. Propositions : lignes des bookmakers et cote minimale")
+    print("\nZ10. Propositions : lignes des bookmakers et cote minimale")
     from ibet.modeles import offres as of
     total, _ = CORNERS.lignes_du_match(7.0, 5.5)
     check("corners : la ligne principale est au milieu de l'echelle", 12.5 in total, True)
