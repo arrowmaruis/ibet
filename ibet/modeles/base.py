@@ -146,6 +146,16 @@ class ModeleEvenement:
     seuil: float = 0.0
     seuils_equipe: tuple[float, ...] = ()
     seuils_total: tuple[float, ...] = ()
+    # Lignes proposees par les bookmakers : la plage ou ils en ouvrent
+    # (`gamme_*`, bornes comprises), et combien de lignes de part et d'autre de
+    # leur ligne principale -- celle ou « plus » et « moins » se valent. Un
+    # match a 12 corners attendus ne se joue pas sur « plus de 7.5 », que
+    # personne ne cote : il se joue de 9.5 a 14.5. Sans gamme, les seuils fixes
+    # ci-dessus servent tels quels.
+    gamme_total: tuple[float, float] | None = None
+    gamme_equipe: tuple[float, float] | None = None
+    ecart_total: int = 2
+    ecart_equipe: int = 1
     # Le cote mis en avant. "plus de 9.5 corners" et "moins de 9.5 corners"
     # sont deux faces de la MEME probabilite : `prefere` ne change aucun calcul,
     # c'est un choix de PRESENTATION.
@@ -226,6 +236,48 @@ class ModeleEvenement:
             return total_over_probability(lam_home, lam_away, line, phi_total)
         return over_probability(lam_home, lam_away, line, rho)
 
+    def lignes_du_match(
+        self,
+        lam_home: float,
+        lam_away: float,
+        rho: float = RHO,
+        phi_home: float | None = None,
+        phi_away: float | None = None,
+    ) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        """(lignes du total, lignes par equipe) qu'un bookmaker ouvrirait.
+
+        La ligne principale est celle dont la probabilite de depassement est
+        la plus proche de 50 % ; on garde `ecart` lignes de chaque cote, dans
+        la gamme. Par equipe, une seule echelle pour les deux : de la ligne
+        principale de la plus faible a celle de la plus forte, elargie de
+        `ecart_equipe`.
+        """
+        if not self.gamme_total or not self.gamme_equipe:
+            return self.seuils_total, self.seuils_equipe
+        phi_home = self.dispersion if phi_home is None else phi_home
+        phi_away = self.dispersion if phi_away is None else phi_away
+        phi_total = _blend(phi_home, phi_away, lam_home, lam_away)
+
+        def autour(gamme, ecart, principales):
+            bas, haut = gamme
+            toutes = [bas + k for k in range(int(round(haut - bas)) + 1)]
+            a = max(bas, min(principales) - ecart)
+            b = min(haut, max(principales) + ecart)
+            return tuple(l for l in toutes if a - 1e-9 <= l <= b + 1e-9)
+
+        def principale(gamme, p_plus):
+            bas, haut = gamme
+            toutes = [bas + k for k in range(int(round(haut - bas)) + 1)]
+            return min(toutes, key=lambda l: abs(p_plus(l) - 0.5))
+
+        total = autour(self.gamme_total, self.ecart_total, [principale(
+            self.gamme_total,
+            lambda l: self.probabilite_total(lam_home, lam_away, l, rho, phi_total))])
+        equipe = autour(self.gamme_equipe, self.ecart_equipe, [
+            principale(self.gamme_equipe, lambda l, lam=lam, phi=phi: team_over_probability(lam, l, phi))
+            for lam, phi in ((lam_home, phi_home), (lam_away, phi_away))])
+        return total, equipe
+
     def echelles(
         self,
         lam_home: float,
@@ -245,19 +297,21 @@ class ModeleEvenement:
         # Le total additionne deux lois : sa dispersion est celle des deux cotes,
         # ponderee par ce que chacun apporte a la somme.
         phi_total = _blend(phi_home, phi_away, lam_home, lam_away)
+        seuils_total, seuils_equipe = self.lignes_du_match(
+            lam_home, lam_away, rho, phi_home, phi_away)
         total = [
             self.probabilite_total(lam_home, lam_away, l, rho, phi_total)
-            for l in self.seuils_total
+            for l in seuils_total
         ]
         return {
-            "seuils_equipe": list(self.seuils_equipe),
+            "seuils_equipe": list(seuils_equipe),
             "domicile": [
-                team_over_probability(lam_home, l, phi_home) for l in self.seuils_equipe
+                team_over_probability(lam_home, l, phi_home) for l in seuils_equipe
             ],
             "exterieur": [
-                team_over_probability(lam_away, l, phi_away) for l in self.seuils_equipe
+                team_over_probability(lam_away, l, phi_away) for l in seuils_equipe
             ],
-            "seuils_total": list(self.seuils_total),
+            "seuils_total": list(seuils_total),
             "total": total,
             "dispersion": phi_total,
         }
@@ -299,20 +353,22 @@ class ModeleEvenement:
         def add(label: str, probability: float, family: str) -> None:
             candidates.append({"libelle": label, "p": probability, "famille": family})
 
-        for line in self.seuils_total:
+        seuils_total, seuils_equipe = self.lignes_du_match(
+            lam_home, lam_away, rho, phi_home, phi_away)
+        for line in seuils_total:
             over = self.probabilite_total(lam_home, lam_away, line, rho, phi_total)
             add("Plus de %g %s au total" % (line, noun), over, "total")
             add("Moins de %g %s au total" % (line, noun), 1.0 - over, "total")
 
         for name, lam, phi in ((home, lam_home, phi_home), (away, lam_away, phi_away)):
-            for line in self.seuils_equipe:
+            for line in seuils_equipe:
                 over = team_over_probability(lam, line, phi)
                 add("%s : plus de %g %s" % (name, line, noun), over, "equipe")
                 add("%s : moins de %g %s" % (name, line, noun), 1.0 - over, "equipe")
 
         # Fourchettes : deux bornes valent souvent mieux qu'un seuil, et le calcul
         # se fait par difference de deux seuils, donc sous exactement la meme loi.
-        for low, high in _ranges(self.seuils_total):
+        for low, high in _ranges(seuils_total):
             probability = self.probabilite_total(
                 lam_home, lam_away, low - 0.5, rho
             ) - self.probabilite_total(lam_home, lam_away, high + 0.5, rho)
@@ -434,8 +490,11 @@ class ModeleEvenement:
         candidates = self.candidats(
             teams, lam_home, lam_away, rho, phi_home, phi_away, partenaires
         )
-        entry["offres"] = select_offers(candidates)
-        entry["marches"] = market_board(candidates, entry["offres"])
+        # Corners, tirs cadres, cartons : marches speciaux, plus margines que
+        # le 1X2 et les buts (`bookmakers.MAJORATION_SPECIAUX`).
+        special = self.cle != "buts"
+        entry["offres"] = select_offers(candidates, special=special)
+        entry["marches"] = market_board(candidates, entry["offres"], special=special)
         # Les candidates ne sont exposees qu'a la demande : une fiche n'a que
         # faire de soixante propositions dont elle n'en retient que trois, mais
         # l'evaluation en a besoin pour mesurer la calibration hors de la

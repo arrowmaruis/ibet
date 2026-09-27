@@ -67,6 +67,11 @@ class ModeleCartonsJaunes(ModeleParEquipe):
     seuil = CARDS_LINE
     seuils_equipe = (0.5, 1.5, 2.5, 3.5)
     seuils_total = (2.5, 3.5, 4.5, 5.5)
+    # Lignes des bookmakers : total de 1.5 a 7.5, par equipe de 0.5 a 4.5.
+    gamme_total = (1.5, 7.5)
+    gamme_equipe = (0.5, 4.5)
+    ecart_total = 2
+    ecart_equipe = 1
     prefere = "les deux"
     dispersion = DISPERSION
     correlation = CORRELATION

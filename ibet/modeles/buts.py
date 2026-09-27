@@ -145,6 +145,11 @@ class ModeleButs(ModeleEvenement):
     seuil = GOALS_LINE
     seuils_equipe = (0.5, 1.5, 2.5, 3.5)
     seuils_total = (0.5, 1.5, 2.5, 3.5, 4.5, 5.5)
+    # Lignes des bookmakers : total de 0.5 a 6.5, par equipe de 0.5 a 3.5.
+    gamme_total = (0.5, 6.5)
+    gamme_equipe = (0.5, 3.5)
+    ecart_total = 2
+    ecart_equipe = 1
     prefere = "les deux"
     dispersion = DISPERSION
     correlation = CORRELATION

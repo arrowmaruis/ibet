@@ -715,7 +715,9 @@ def main(argv: list[str] | None = None) -> int:
         True,
     )
     ladders = metrics["buts"]["echelles"]
-    check("echelle par equipe", ladders["seuils_equipe"], [0.5, 1.5, 2.5, 3.5])
+    check("echelle par equipe dans la gamme des bookmakers",
+          all(0.5 <= l <= 3.5 for l in ladders["seuils_equipe"]) and len(ladders["seuils_equipe"]) >= 2,
+          True)
     check(
         "echelle decroissante",
         all(a >= b for a, b in zip(ladders["total"], ladders["total"][1:])),
@@ -957,7 +959,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     # La liste se remplit meme quand une seule famille tient dans la plage.
     single = [
-        {"libelle": "p%d" % i, "p": 0.90 - i / 100, "famille": "total"}
+        {"libelle": "p%d" % i, "p": 0.80 - i / 100, "famille": "total"}
         for i in range(6)
     ]
     check(
@@ -2881,6 +2883,32 @@ def main(argv: list[str] | None = None) -> int:
     check("l'onze aligne deplace les corners au poids mesure",
           round(CORNERS.ajuster((5.0, 4.0), {"styles": {"domicile": {"facteur": 1.2, "source": "aligne"}}})[0], 4),
           round(5.0 * 1.2 ** CORNERS.poids_styles, 4))
+
+    print("\nZ9. Propositions : lignes des bookmakers et cote minimale")
+    from ibet.modeles import offres as of
+    total, _ = CORNERS.lignes_du_match(7.0, 5.5)
+    check("corners : la ligne principale est au milieu de l'echelle", 12.5 in total, True)
+    check("corners : pas de ligne que personne ne cote", min(total) >= 9.5, True)
+    check("corners : lignes dans la gamme", all(6.5 <= l <= 14.5 for l in total), True)
+    faible = CORNERS.lignes_du_match(3.0, 3.0)[0]
+    check("match pauvre : l'echelle descend jusqu'au bas de la gamme", min(faible), 6.5)
+    evidentes = [{"libelle": "Plus de 0.5 buts au total", "p": 0.97, "famille": "total"},
+                 {"libelle": "Plus de 1.5 buts au total", "p": 0.78, "famille": "total"}]
+    retenues = of.select_offers(evidentes)
+    check("une evidence payee sous la cote minimale n'est pas proposee",
+          [o["libelle"] for o in retenues], ["Plus de 1.5 buts au total"])
+    check("la cote juste accompagne chaque proposition", retenues[0]["cote_juste"], round(1 / 0.78, 2))
+    check("cote estimee au-dessus du minimum", retenues[0]["cote_estimee"] >= of.COTE_MIN, True)
+    from ibet.modeles import bookmakers as bk
+    check("dix bookmakers de reference", len(bk.BOOKMAKERS), 10)
+    check("le moins margine paie le mieux", bk.cotes(0.7)[0][0], "1xBet")
+    check("un marche special paie moins que le 1X2",
+          bk.cotes(0.7, special=True)[0][1] < bk.cotes(0.7)[0][1], True)
+    check("chaque proposition dit ou la prendre",
+          [n for n, _ in retenues[0]["bookmakers"]["meilleurs"]], ["1xBet", "Pinnacle", "bet365"])
+    # A 81 %, trois operateurs paient encore 1.15 sur les buts, pas sur les corners.
+    check("81 % : jouable sur les buts", of.jouable(0.81), True)
+    check("81 % : pas sur un marche special", of.jouable(0.81, special=True), False)
 
     print("\nZ8. Cotes du marche : corners et tirs cadres")
     from ibet.modeles.apports import corriger_par_le_marche

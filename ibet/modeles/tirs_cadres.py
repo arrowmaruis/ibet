@@ -45,6 +45,11 @@ class ModeleTirsCadres(AvecApports, ModeleParEquipe):
     seuil = SHOTS_LINE
     seuils_equipe = (2.5, 3.5, 4.5, 5.5)
     seuils_total = (5.5, 6.5, 7.5, 8.5, 9.5)
+    # Lignes des bookmakers : total de 4.5 a 12.5, par equipe de 1.5 a 7.5.
+    gamme_total = (4.5, 12.5)
+    gamme_equipe = (1.5, 7.5)
+    ecart_total = 2
+    ecart_equipe = 2
     # Le depassement est mis en avant (choix de presentation, pas de calcul).
     prefere = "plus"
     dispersion = DISPERSION

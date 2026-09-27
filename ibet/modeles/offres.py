@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from . import bookmakers
+
 # Propositions retenues a l'affichage : les plus probables, et seulement
 # celles qui disent quelque chose. En deca de OFFER_MIN, annoncer une
 # proposition revient a annoncer un tirage a pile ou face ; au-dela de
@@ -16,6 +18,35 @@ from typing import Any, Sequence
 OFFER_MIN = 0.60
 OFFER_CEILING = 0.95
 OFFER_MAX = 6
+
+# Ce que paieraient les dix bookmakers de reference (`bookmakers.py`). Une
+# proposition n'est retenue que si au moins trois d'entre eux la paient
+# COTE_MIN ou plus -- « plus de 0.5 but » a 93 % se paie 1.01, personne ne la
+# prend et aucun coupon ne l'accepte. `MARGE_BOOKMAKER` est la marge mediane
+# des dix, pour la cote « moyenne » affichee.
+MARGE_BOOKMAKER = 0.067
+COTE_MIN = 1.15
+
+
+def cote_juste(p: float) -> float | None:
+    """Cote a partir de laquelle le pari est rentable selon le modele."""
+    return round(1.0 / p, 2) if p > 0 else None
+
+
+def cote_estimee(p: float) -> float | None:
+    """Cote qu'un bookmaker median proposerait, marge comprise."""
+    return round(1.0 / (p * (1.0 + MARGE_BOOKMAKER)), 2) if p > 0 else None
+
+
+def jouable(p: float, special: bool = False) -> bool:
+    """Assez d'operateurs la paient-ils au-dessus de la cote minimale ?"""
+    return p <= OFFER_CEILING and bookmakers.jouable(p, COTE_MIN, special)
+
+
+def _coter(offer: dict[str, Any], special: bool = False) -> dict[str, Any]:
+    return dict(offer, cote_juste=cote_juste(offer["p"]), cote_estimee=cote_estimee(offer["p"]),
+                bookmakers=bookmakers.resume(offer["p"], COTE_MIN, special))
+
 
 # Familles deja couvertes, seuil par seuil, par les echelles : les repeter dans
 # le tableau des marches n'apprendrait rien.
@@ -38,11 +69,12 @@ def select_offers(
     candidates: list[dict[str, Any]],
     limit: int = OFFER_MAX,
     per_family: int = OFFER_PER_FAMILY,
+    special: bool = False,
 ) -> list[dict[str, Any]]:
     """Les propositions retenues : les plus sures, et les moins redondantes.
 
-    Sous OFFER_MIN, une proposition n'engage rien ; au-dessus d'OFFER_CEILING,
-    elle enonce une evidence. Entre les deux, les plus probables d'abord -- mais
+    Sous OFFER_MIN, une proposition n'engage rien ; si moins de trois des dix
+    bookmakers de reference la paient COTE_MIN, elle enonce une evidence. Entre les deux, les plus probables d'abord -- mais
     avec un plafond par famille.
 
     Prendre simplement les N plus probables donnait une liste ou tout se
@@ -53,7 +85,8 @@ def select_offers(
     liste courte.
     """
     retained = sorted(
-        (c for c in candidates if OFFER_MIN <= c["p"] <= OFFER_CEILING),
+        (_coter(c, special) for c in candidates
+         if c["p"] >= OFFER_MIN and jouable(c["p"], special)),
         key=lambda offer: offer["p"],
         reverse=True,
     )
@@ -83,7 +116,8 @@ def select_offers(
 
 
 def market_board(
-    candidates: list[dict[str, Any]], exclude: Sequence[dict[str, Any]] = ()
+    candidates: list[dict[str, Any]], exclude: Sequence[dict[str, Any]] = (),
+    special: bool = False,
 ) -> list[dict[str, Any]]:
     """Les marches disponibles, par famille, au-dela de la selection.
 
@@ -100,13 +134,15 @@ def market_board(
     grouped: dict[str, list[dict[str, Any]]] = {}
     for candidate in candidates:
         family = candidate.get("famille", "")
-        if family in LADDER_FAMILIES or candidate["p"] < MARKET_MIN:
+        # Ni curiosite sous 5 %, ni evidence payee sous la cote minimale.
+        if (family in LADDER_FAMILIES or candidate["p"] < MARKET_MIN
+                or not jouable(candidate["p"], special)):
             continue
         # Ce qui est deja dans la selection n'a pas a etre repete deux tableaux
         # plus bas : le lecteur croirait a deux propositions distinctes.
         if candidate["libelle"] in already:
             continue
-        grouped.setdefault(family, []).append(candidate)
+        grouped.setdefault(family, []).append(_coter(candidate, special))
 
     board = []
     for family, offers in grouped.items():

@@ -689,23 +689,30 @@ def render_prediction(matches: Sequence[dict[str, Any]]) -> str:
         # La famille est affichee : sans elle, six propositions se ressemblent
         # toutes, et le lecteur ne voit pas qu'il a devant lui six paris de
         # natures differentes plutot que six variantes du meme.
+        # « Cote juste » : sous cette cote, le pari perd de l'argent selon le
+        # modele. C'est le chiffre a comparer a celle du bookmaker.
         lines.append(
-            "  %-14s %-13s %-46s %8s"
-            % ("Grandeur", "Type", "Proposition", "Reussite")
+            "  %-14s %-13s %-46s %8s %6s  %s"
+            % ("Grandeur", "Type", "Proposition", "Reussite", "Cote", "Chez les 10 bookmakers")
         )
-        lines.append("  " + "-" * 86)
+        lines.append("  " + "-" * 122)
         for metric in prediction["grandeurs"]:
             offers = metric.get("offres") or []
             for index, offer in enumerate(offers):
                 lines.append(
-                    "  %-14s %-13s %-46s %8s"
+                    "  %-14s %-13s %-46s %8s %6s  %s"
                     % (
                         metric["libelle"] if index == 0 else "",
                         _truncate(offer.get("famille", ""), 13),
                         _truncate(offer["libelle"], 46),
                         _pct(offer["p"]),
+                        _cote(offer),
+                        _ou_la_prendre(offer),
                     )
                 )
+
+        # --- Tableau 4 bis : la fiche vue de chaque bookmaker -----------------
+        lines.extend(render_bookmakers(prediction))
 
         # --- Tableau 5 : les autres marches, par famille -----------------------
         # Les echelles couvrent deja les seuils ; ce tableau montre ce qu'elles
@@ -719,20 +726,21 @@ def render_prediction(matches: Sequence[dict[str, Any]]) -> str:
         if board:
             lines.append('')
             lines.append(
-                '  %-14s %-13s %-46s %8s'
-                % ('Grandeur', 'Marche', 'Proposition', 'Modele')
+                '  %-14s %-13s %-46s %8s %6s'
+                % ('Grandeur', 'Marche', 'Proposition', 'Modele', 'Cote')
             )
-            lines.append('  ' + '-' * 86)
+            lines.append('  ' + '-' * 93)
             previous = ''
             for label, row in board:
                 for index, offer in enumerate(row['propositions']):
                     lines.append(
-                        '  %-14s %-13s %-46s %8s'
+                        '  %-14s %-13s %-46s %8s %6s'
                         % (
                             label if label != previous else '',
                             _truncate(row['famille'], 13) if index == 0 else '',
                             _truncate(offer['libelle'], 46),
                             _pct(offer['p']),
+                            _cote(offer),
                         )
                     )
                     previous = label
@@ -873,6 +881,59 @@ def render_prediction(matches: Sequence[dict[str, Any]]) -> str:
     lines.append("")
     return "\n".join(lines)
 
+
+
+def _cote(offer: dict[str, Any]) -> str:
+    """Cote juste d'une proposition (1 / p), ou un tiret."""
+    cote = offer.get("cote_juste") or (1.0 / offer["p"] if offer.get("p") else None)
+    return "%.2f" % cote if cote else "-"
+
+
+def _ou_la_prendre(offer: dict[str, Any]) -> str:
+    """Fourchette des cotes sur les dix bookmakers de reference, et chez
+    combien d'entre eux la proposition reste au-dessus de la cote minimale."""
+    resume = offer.get("bookmakers") or {}
+    fourchette = resume.get("fourchette")
+    if not fourchette:
+        return ""
+    return "%.2f a %.2f  (%d/%d)" % (
+        fourchette[0], fourchette[1],
+        resume.get("operateurs_ok", 0), resume.get("operateurs", 0))
+
+
+def render_bookmakers(prediction: dict[str, Any]) -> list[str]:
+    """Pour chacun des dix bookmakers : les propositions de la fiche qu'il
+    paie au-dessus de la cote minimale, et la meilleure d'entre elles.
+
+    Chaque utilisateur joue chez l'un ou l'autre : ce tableau lui montre ce
+    que la fiche vaut CHEZ LUI, plutot que chez le moins margine."""
+    from ibet.modeles import bookmakers as bk
+    from ibet.modeles.offres import COTE_MIN
+
+    offres = [o for m in prediction["grandeurs"] for o in m.get("offres") or []]
+    if not offres:
+        return []
+    lignes = ["", "  %-14s %6s %11s  %s" % ("Bookmaker", "Marge", "Jouables", "Meilleure proposition chez lui"),
+              "  " + "-" * 100]
+    for b in bk.BOOKMAKERS:
+        jouables = []
+        for o in offres:
+            cote = dict((o.get("bookmakers") or {}).get("toutes") or []).get(b.nom)
+            if cote and cote >= COTE_MIN:
+                jouables.append((o["p"], cote, o["libelle"]))
+        meilleure = max(jouables) if jouables else None
+        lignes.append("  %-14s %5.1f%% %7d/%-3d  %s" % (
+            b.nom, 100 * b.marge, len(jouables), len(offres),
+            "%s a %.2f" % (_truncate(meilleure[2], 60), meilleure[1]) if meilleure else "-"))
+    lignes.append("")
+    for chunk in _wrap(
+        "Cotes estimees a partir de la marge mesuree de chaque operateur sur le "
+        "1X2 (majoree de 3 points sur corners, tirs cadres et cartons), pas "
+        "relevees chez lui. Comparez-les a la cote affichee sur son site.",
+        74,
+    ):
+        lignes.append("    " + chunk)
+    return lignes
 
 
 def _best_offer(prediction: dict[str, Any]) -> dict[str, Any] | None:

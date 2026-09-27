@@ -60,7 +60,7 @@ PAR_CLE: dict[str, ModeleEvenement] = {m.cle: m for m in MODELES + AUXILIAIRES}
 # Version du socle commun (estimation, lois, offres, reglages). Une prevision
 # depend de son modele ET du moteur : une amelioration du moteur change toutes
 # les grandeurs a la fois, et doit se lire comme telle dans les etudes.
-VERSION_MOTEUR = "1.0.0"
+VERSION_MOTEUR = "1.1.0"
 
 # Journal des versions : un fichier Markdown par modele, plus un pour le moteur.
 JOURNAL = Path(__file__).parent / "journal"

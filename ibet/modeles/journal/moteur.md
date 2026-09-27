@@ -10,7 +10,62 @@ Toute modification ici change **toutes** les grandeurs : elle incrémente
 
 ---
 
-## 1.0.0 — en service depuis le 2026-09-27
+## 1.1.0 — en service depuis le 2026-09-27
+
+**Changement** : les propositions suivent ce que proposent les bookmakers.
+Aucune probabilité ne change ; ce qui change, c'est **quelles** propositions
+la fiche montre.
+**Pourquoi** : la fiche proposait des évidences que personne ne cote (« plus
+de 0.5 but » à 93 %, payé 1.01), et des lignes fixes sans rapport avec le
+match (« plus de 7.5 corners » pour un match à douze corners attendus).
+
+### Ce que fait la version
+- **Lignes du match** (`base.lignes_du_match`) : la ligne principale est celle
+  dont la probabilité de dépassement est la plus proche de 50 %, comme le
+  bookmaker place la sienne. L'échelle garde `ecart_*` lignes de part et
+  d'autre, dans la gamme où les bookmakers en ouvrent (`gamme_*` de chaque
+  modèle) :
+
+  | Grandeur | Total | ± lignes | Par équipe | ± lignes |
+  |---|---|---|---|---|
+  | Buts | 0.5 – 6.5 | 2 | 0.5 – 3.5 | 1 |
+  | Corners | 6.5 – 14.5 | 3 | 1.5 – 8.5 | 2 |
+  | Tirs cadrés | 4.5 – 12.5 | 2 | 1.5 – 7.5 | 2 |
+  | Cartons jaunes | 1.5 – 7.5 | 2 | 0.5 – 4.5 | 1 |
+
+  Les échelles, les propositions et les fourchettes utilisent ces lignes ; le
+  xG (jamais parié) garde ses seuils fixes.
+- **Dix bookmakers de référence** (`ibet/modeles/bookmakers.py`) : 1xBet,
+  Pinnacle, bet365, Bwin, William Hill, Betfair, Betway, Betclic, Winamax,
+  Unibet. Chacun porte sa marge 1X2 **mesurée** : football-data.co.uk
+  (2024-25 et 2025-26, jusqu'à 4 728 matchs) ou the-odds-api.com (Ligue 1,
+  18 matchs) pour les opérateurs absents de la première. De 1.6 % (1xBet) à
+  13.9 % (Unibet FR). Cote payée : `1 / (p·(1 + marge))`.
+- **Cote minimale** (`offres.COTE_MIN` = 1.15) : une proposition n'est retenue,
+  ni affichée au tableau des marchés, que si **trois** des dix bookmakers au
+  moins la paient 1.15 ou plus. Plafond de fait : 82 % sur les buts et l'issue,
+  80 % sur les marchés spéciaux (il était de 95 %).
+- **Marchés spéciaux** (corners, tirs cadrés, cartons) : marge majorée de
+  3 points (`MAJORATION_SPECIAUX`). C'est une **hypothèse** : aucune source
+  gratuite ne publie ces cotes.
+- **Dans la fiche** : chaque proposition porte sa cote juste (1 / p), la
+  fourchette des cotes sur les dix bookmakers et chez combien elle reste
+  jouable ; un tableau montre, bookmaker par bookmaker, combien de
+  propositions de la fiche il paie au-dessus de 1.15.
+
+### Points faibles
+- **Cotes estimées, pas relevées** : la marge d'un opérateur est une moyenne ;
+  sur un match donné, sa cote peut s'en écarter. Les marges de Betfair,
+  Betway, Betclic, Winamax et Unibet reposent sur 18 matchs seulement.
+- **Gammes de lignes communes aux dix** : les lignes réellement ouvertes par
+  chaque opérateur ne sont publiées par aucune source gratuite.
+- Les lignes affichées dépendent du match : deux fiches ne montrent plus les
+  mêmes seuils, ce qui rend les échelles moins comparables d'un match à
+  l'autre.
+
+---
+
+## 1.0.0 — retirée le 2026-09-27
 
 **Changement** : aucun changement de calcul. C'est le moteur de `ibet/prevision/predict.py` tel
 qu'il était avant le découpage en un modèle par événement, versionné pour la

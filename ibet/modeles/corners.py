@@ -76,6 +76,12 @@ class ModeleCorners(AvecApports, ModeleParEquipe):
     seuil = CORNERS_LINE
     seuils_equipe = (2.5, 3.5, 4.5, 5.5, 6.5)
     seuils_total = (7.5, 8.5, 9.5, 10.5, 11.5)
+    # Lignes des bookmakers : total de 6.5 a 14.5, trois de part et d'autre de
+    # la principale ; par equipe de 1.5 a 8.5, deux de part et d'autre.
+    gamme_total = (6.5, 14.5)
+    gamme_equipe = (1.5, 8.5)
+    ecart_total = 3
+    ecart_equipe = 2
     # Le depassement est mis en avant (choix de presentation, pas de calcul).
     prefere = "plus"
     dispersion = DISPERSION
