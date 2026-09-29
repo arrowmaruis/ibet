@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ibet import chemins
+from ibet.sources import horloge
 
 DB_PATH = chemins.BASE
 
@@ -329,7 +330,7 @@ def _ecrire_resultat(
         """,
         (
             identifiant,
-            datetime.now().astimezone().isoformat(timespec="seconds"),
+            horloge.maintenant().astimezone().isoformat(timespec="seconds"),
             "%s - %s" % (match.get("domicile", ""), match.get("exterieur", "")),
             match.get("coup_denvoi_local", "") or match.get("heure", ""),
             match.get("statut", ""),
@@ -447,7 +448,7 @@ def archiver_feuille(
         return False
     ligne = (
         match_id,
-        datetime.now().astimezone().isoformat(timespec="seconds"),
+        horloge.maintenant().astimezone().isoformat(timespec="seconds"),
         date or "",
         competition or "",
         domicile or "",
@@ -511,7 +512,7 @@ def archiver_stats_joueurs(
         """INSERT OR REPLACE INTO matchs_joueurs
            (match_id, releve_le, date, championnat, saison, domicile, exterieur, couvert)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (match_id, datetime.now().astimezone().isoformat(timespec="seconds"),
+        (match_id, horloge.maintenant().astimezone().isoformat(timespec="seconds"),
          match.get("date") or "", championnat, saison, equipes["domicile"],
          equipes["exterieur"], 1 if n else 0),
     )
@@ -791,7 +792,7 @@ def save_odds(
         raise ValueError(
             "Aucune cote exploitable : une cote decimale est superieure a 1."
         )
-    horodatage = releve_le or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    horodatage = releve_le or horloge.maintenant(timezone.utc).isoformat(timespec="seconds")
     with connect() as connection:
         connection.execute(
             "INSERT INTO cotes (match_id, releve_le, operateur, marche, valeurs)"
@@ -865,7 +866,7 @@ def save_coupon(
     donc ecrit tel quel, avec ses filtres -- relire un coupon sans savoir ce
     qu'on avait demande ne dirait rien de ce qu'on avait decide.
     """
-    horodatage = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    horodatage = horloge.maintenant(timezone.utc).isoformat(timespec="seconds")
     with connect() as connection:
         curseur = connection.execute(
             "INSERT INTO coupons (cree_le, libelle, filtres, payload)"
@@ -1018,13 +1019,22 @@ def tally() -> dict[str, Any]:
 
     Le taux n'est calcule que sur les propositions **tranchees**. Rapporter les
     reussites au total ferait passer une prevision en attente pour un echec.
+
+    Le taux seul ne juge rien, et c'est pourquoi la moyenne ANNONCEE
+    l'accompagne. 81 % de reussite n'est ni bon ni mauvais tant qu'on ignore ce
+    que le modele avait promis : proposer des quasi-certitudes donnerait 95 %
+    avec un modele pire, et proposer des coups de piece donnerait 50 % avec un
+    modele parfait. Le NIVEAU est un choix de ce qu'on propose ; la QUALITE est
+    l'ecart entre annonce et observe.
     """
     with connect() as connection:
         row = connection.execute(
             """
             SELECT COUNT(*)                  AS total,
                    SUM(verifie IS NOT NULL)  AS tranchees,
-                   SUM(COALESCE(verifie, 0)) AS reussies
+                   SUM(COALESCE(verifie, 0)) AS reussies,
+                   AVG(CASE WHEN verifie IS NOT NULL THEN probabilite END)
+                                             AS annonce
               FROM offres
             """
         ).fetchone()
@@ -1041,6 +1051,14 @@ def tally() -> dict[str, Any]:
         "offres_tranchees": settled,
         "offres_reussies": won,
         "taux_reussite": (won / settled) if settled else None,
+        # Ce que le modele promettait en moyenne sur ces memes propositions.
+        "annonce_moyen": row["annonce"],
+        # Positif = il a promis plus qu'il n'a tenu. C'est le seul des trois
+        # chiffres qui dise quelque chose du modele plutot que de ce qu'on a
+        # choisi de lui faire proposer.
+        "ecart": (row["annonce"] - won / settled)
+        if settled and row["annonce"] is not None
+        else None,
     }
 
 

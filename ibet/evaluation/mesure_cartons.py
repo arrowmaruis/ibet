@@ -9,6 +9,8 @@ loi du modele 1.0.0 -- binomiale de dispersion 0.847, correlation +0.083. Les
 variantes le multiplient :
 
     arbitre       rapport lisse de l'arbitre designe, les deux cotes ;
+    historique    le meme, parti de l'historique worldfootball de l'arbitre
+                  (saisons anterieures a celle du match seulement) ;
     joueurs       onze aligne contre onze habituel de l'equipe ;
     entraineur    carriere de l'entraineur, quand il vient d'arriver ;
     et toutes leurs combinaisons avec le poids retenu.
@@ -41,7 +43,7 @@ from ibet.modeles.lois import (
     team_over_probability,
     total_over_probability,
 )
-from ibet.stockage import store
+from ibet.stockage import arbitres, store
 
 SEUILS_TOTAL = (2.5, 3.5, 4.5, 5.5)
 SEUILS_EQUIPE = (0.5, 1.5, 2.5, 3.5)
@@ -78,8 +80,13 @@ def _noter(pred: dict[str, float], yd: int, ye: int) -> dict[str, Any]:
     }
 
 
-def rejouer(reglage: Reglage, poids: dict[str, float]) -> list[dict[str, Any]]:
-    """Rend, match par match, la note de chaque variante."""
+def rejouer(reglage: Reglage, poids: dict[str, float],
+            avec_lambdas: bool = False) -> list[dict[str, Any]]:
+    """Rend, match par match, la note de chaque variante.
+
+    `avec_lambdas` ajoute a chaque note les nombres attendus de chaque variante
+    et les cartons observes (`mesure_sens` s'en sert).
+    """
     index = Discipline(reglage)
     rows = [r for r in store.feuilles() if r.get("date")]
     rows.sort(key=lambda r: (r["date"], r["match_id"]))
@@ -97,9 +104,14 @@ def rejouer(reglage: Reglage, poids: dict[str, float]) -> list[dict[str, Any]]:
         _, _, ne = index.equipe(ext, date)
         if nd >= MIN_MATCHS and ne >= MIN_MATCHS:
             ld0, le0 = index.attendu_equipes(comp, dom, ext, date)
-            arb = index.arbitre(cle_arbitre(row.get("arbitre") or "",
-                                            feuille.get("arbitre_pays") or ""), date)
-            facteurs: dict[str, tuple[float, float]] = {"arbitre": (arb["rapport"],) * 2}
+            nom_arb, pays_arb = row.get("arbitre") or "", feuille.get("arbitre_pays") or ""
+            arb = index.arbitre(cle_arbitre(nom_arb, pays_arb), date)
+            arb_h = index.arbitre(cle_arbitre(nom_arb, pays_arb), date,
+                                  arbitres.historique_de(nom_arb, pays_arb))
+            facteurs: dict[str, tuple[float, float]] = {
+                "arbitre": (arb["rapport"],) * 2,
+                "historique": (arb_h["rapport"],) * 2,
+            }
 
             fj = []
             onzes_connus = 0
@@ -120,13 +132,16 @@ def rejouer(reglage: Reglage, poids: dict[str, float]) -> list[dict[str, Any]]:
             base = {"ld": ld0, "le": le0, "phi": DISPERSION, "corr": CORRELATION}
             variantes: dict[str, dict[str, float]] = {"reference": base}
             for nom, (fd, fe) in facteurs.items():
-                w = poids.get(nom, 1.0)
+                w = poids.get("arbitre" if nom == "historique" else nom, 1.0)
                 variantes[nom] = dict(base, ld=ld0 * fd ** w, le=le0 * fe ** w)
             # Arbitre inconnu ou mal connu : sa variance elargit le total.
-            v_arb = arb["variance"] if arb["matchs"] else 1.0 / reglage.lissage_arbitre
-            ld_a, le_a = variantes["arbitre"]["ld"], variantes["arbitre"]["le"]
-            corr_a = CORRELATION + poids.get("variance_arbitre", 0.0) * v_arb * math.sqrt(ld_a * le_a) / DISPERSION
+            def _corr(variante: dict[str, float], v: float) -> float:
+                return CORRELATION + poids.get("variance_arbitre", 0.0) * v * math.sqrt(
+                    variante["ld"] * variante["le"]) / DISPERSION
+            corr_a = _corr(variantes["arbitre"], arb["variance"])
             variantes["arbitre+variance"] = dict(variantes["arbitre"], corr=corr_a)
+            variantes["historique+variance"] = dict(
+                variantes["historique"], corr=_corr(variantes["historique"], arb_h["variance"]))
             ld_all, le_all = ld0, le0
             for nom in ("arbitre", "joueurs", "entraineur"):
                 w = poids.get(nom, 1.0)
@@ -134,9 +149,16 @@ def rejouer(reglage: Reglage, poids: dict[str, float]) -> list[dict[str, Any]]:
                 le_all *= facteurs[nom][1] ** w
             variantes["tout"] = dict(base, ld=ld_all, le=le_all, corr=corr_a)
 
+            if avec_lambdas:
+                extra = {"yd": yd, "ye": ye,
+                         "lambdas": {k: (v["ld"], v["le"]) for k, v in variantes.items()}}
+            else:
+                extra = {}
             notes.append({
+                **extra,
                 "date": date, "match_id": row["match_id"],
                 "arbitre_connu": arb["matchs"],
+                "historique": (arb_h.get("historique") or {}).get("matchs", 0.0),
                 "onze": onzes_connus == 2,
                 "changement_coach": any(f != 1.0 for f in fc),
                 "variantes": {k: _noter(v, yd, ye) for k, v in variantes.items()},
@@ -175,7 +197,7 @@ def rapport(notes: list[dict[str, Any]], filtre: Callable[[dict], bool] = lambda
         t = d / e if nom != "reference" and e == e and e > 1e-9 else 0.0
         print("%-18s %9.4f %+9.4f %+9.1f %10.4f %10.4f %+8.2f" % (nom, ll, d, t, bt, be, biais))
     # Calibration des seuils du total, par tranche annoncee.
-    for nom in ("reference", "arbitre+variance", "tout"):
+    for nom in ("reference", "arbitre+variance", "historique+variance", "tout"):
         if nom not in choisies[0]["variantes"]:
             continue
         paires = [p for n in choisies for p in n["variantes"][nom]["total"]
@@ -215,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     rapport(notes[:coupe], titre="reglage (60 % anciens)")
     rapport(notes[coupe:], titre="TEST (40 % recents)")
     rapport(notes[coupe:], lambda n: n["arbitre_connu"] >= 3, "TEST, arbitre vu >= 3 fois")
+    rapport(notes[coupe:], lambda n: n["historique"] > 0, "TEST, arbitre dans l'historique")
     rapport(notes[coupe:], lambda n: n["onze"], "TEST, onzes connus")
     rapport(notes[coupe:], lambda n: n["changement_coach"], "TEST, changement d'entraineur")
     return 0

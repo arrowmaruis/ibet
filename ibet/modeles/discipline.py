@@ -49,6 +49,16 @@ LISSAGE_ARBITRE = 40.0
 LISSAGE_JOUEUR = 15.0
 LISSAGE_EQUIPE = 8.0
 
+# Historique des arbitres (worldfootball.net, `stockage/arbitres.py`) : il
+# remplace l'a priori neutre (rapport 1) par le rapport que l'arbitre a montre
+# les saisons precedentes, lui-meme lisse de `LISSAGE_HISTORIQUE` cartons
+# attendus fictifs. `POIDS_HISTORIQUE` dit de combien cet historique renforce
+# l'a priori : 0 = il en deplace le centre sans en changer le poids (qui reste
+# `lissage_arbitre`), 1 = chaque carton attendu de l'historique compte comme
+# un carton attendu des feuilles. Valeurs mesurees par `mesure_cartons.py`.
+LISSAGE_HISTORIQUE = 20.0
+POIDS_HISTORIQUE = 0.0
+
 # Minutes jouees en moyenne par un titulaire, faute de mieux quand on ne sait
 # pas encore qui sortira.
 MINUTES_TITULAIRE = 80.0
@@ -58,6 +68,38 @@ class Reglage(NamedTuple):
     lissage_arbitre: float = LISSAGE_ARBITRE
     lissage_joueur: float = LISSAGE_JOUEUR
     lissage_equipe: float = LISSAGE_EQUIPE
+    lissage_historique: float = LISSAGE_HISTORIQUE
+    poids_historique: float = POIDS_HISTORIQUE
+
+
+def saison_de(date: str) -> str:
+    """Saison europeenne d'une date AAAA-MM-JJ : du 1er juillet au 30 juin."""
+    try:
+        annee, mois = int(date[:4]), int(date[5:7])
+    except (ValueError, IndexError):
+        return ""
+    debut = annee if mois >= 7 else annee - 1
+    return "%d-%d" % (debut, debut + 1)
+
+
+def historique_anterieur(
+    historique: Iterable[dict[str, Any]] | None, date: str
+) -> tuple[float, float, float]:
+    """(jaunes, attendus, matchs) des saisons STRICTEMENT anterieures a `date`.
+
+    La saison du match est exclue meme en partie : ses tableaux cumulent des
+    matchs posterieurs a la date, et les lire reviendrait a prevoir avec le
+    resultat sous les yeux.
+    """
+    saison = saison_de(date)
+    jaunes = attendus = matchs = 0.0
+    for ligne in historique or ():
+        if saison and (ligne.get("saison") or "") >= saison:
+            continue
+        jaunes += float(ligne.get("jaunes") or 0.0)
+        attendus += float(ligne.get("attendus") or 0.0)
+        matchs += float(ligne.get("matchs") or 0.0)
+    return jaunes, attendus, matchs
 
 
 def _jours(a: str, b: str) -> float:
@@ -290,22 +332,39 @@ class Discipline:
         pe, fe, _ = self.equipe(ext, date)
         return md * pd * fe, me * pe * fd
 
-    def arbitre(self, nom: str, date: str) -> dict[str, Any]:
+    def arbitre(
+        self, nom: str, date: str, historique: Iterable[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         """Rapport lisse de l'arbitre, et l'incertitude qui reste dessus.
 
         `variance` est la variance a posteriori du rapport sous un a priori
         Gamma d'effectif `lissage` : elle sert a elargir la loi du total quand
         l'arbitre est mal connu (ou inconnu : rapport 1, variance 1/lissage).
+
+        `historique` (lignes par saison de `stockage.arbitres.historique_de`)
+        remplace le centre de l'a priori : au lieu de supposer l'arbitre moyen,
+        on part de ce qu'il a montre les saisons precedentes, et les feuilles
+        affinent. Sans historique, le calcul est exactement celui de la 2.0.0.
         """
-        k = self.reglage.lissage_arbitre
+        r = self.reglage
+        k = r.lissage_arbitre
+        a_priori, poids_a_priori = 1.0, k
+        trace_historique = None
+        jh, eh, mh = historique_anterieur(historique, date)
+        if eh > 0:
+            a_priori = (jh + r.lissage_historique) / (eh + r.lissage_historique)
+            poids_a_priori = k + r.poids_historique * eh
+            trace_historique = {"matchs": mh, "rapport": round(a_priori, 3)}
+
         serie = self._arbitre.get((nom or "").strip())
-        if not serie:
-            return {"arbitre": nom or "", "rapport": 1.0, "matchs": 0,
-                    "variance": 1.0 / k, "attendu_cumule": 0.0}
-        o, e, n = serie.sommes(date, DEMI_VIE_ARBITRE)
-        rapport = (o + k) / (e + k)
-        return {"arbitre": nom, "rapport": rapport, "matchs": n,
-                "variance": (o + k) / (e + k) ** 2, "attendu_cumule": round(e, 1)}
+        o, e, n = serie.sommes(date, DEMI_VIE_ARBITRE) if serie else (0.0, 0.0, 0)
+        forme = o + poids_a_priori * a_priori
+        taux = e + poids_a_priori
+        rendu = {"arbitre": nom or "", "rapport": forme / taux, "matchs": n,
+                 "variance": forme / taux ** 2, "attendu_cumule": round(e, 1)}
+        if trace_historique:
+            rendu["historique"] = trace_historique
+        return rendu
 
     def taux_joueur(self, joueur_id: str, groupe: str, date: str) -> tuple[float, float]:
         """(jaunes par 90 minutes lisses, minutes connues) d'un joueur."""

@@ -208,6 +208,9 @@ def check(label: str, got, expected) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Sans reseau : l'horloge ne va pas mesurer son ecart sur Internet.
+    from ibet.sources import horloge as _horloge
+    _horloge.fixer(0.0)
     calls: list[dict] = []
 
     def fake_request(url, headers, params):
@@ -2931,6 +2934,272 @@ def main(argv: list[str] | None = None) -> int:
     check("sans apport, corners et tirs cadres inchanges",
           (CORNERS.ajuster((5.0, 4.0), None)[:2], TIRS_CADRES.ajuster((4.0, 3.0), None)[:2]),
           ((5.0, 4.0), (4.0, 3.0)))
+
+    print("\nZ9. Base des entraineurs : mesures, indices, etiquettes")
+    from ibet.stockage import entraineurs as coachs
+
+    moi = {"possession": "60%", "passes": "88% (440/500)", "passes_longues": "50% (20/40)",
+           "centres": "25% (5/20)", "tacles": "60% (6/10)", "fautes": 8, "corners": 7,
+           "xg": "1.80", "cartons_jaunes": 2, "hors_jeux": 1}
+    lui = {"possession": "40%", "passes": "75% (270/360)", "corners": 3, "xg": "0.60",
+           "cartons_jaunes": 3, "hors_jeux": 4}
+    m = coachs.mesures_du_match(moi, lui, 2, 0)
+    check("possession lue en pourcentage", m["possession"], 60.0)
+    check("passes tentees et reussies", (m["passes_tentees"], m["passes_reussies"]), (500.0, 440.0))
+    check("PPDA : passes adverses / (tacles tentes + fautes)",
+          m["ppda_passes_adverses"] / m["ppda_actions"], 360 / 18)
+    check("evenements pour et contre", (m["pour_corners"], m["contre_corners"]), (7.0, 3.0))
+    check("hors-jeux adverses = hors-jeux provoques", m["contre_hors_jeux"], 4.0)
+    check("buts pris au score", (m["pour_buts"], m["contre_buts"]), (2.0, 0.0))
+    check("grandeur absente : pas de mesure",
+          "passes_tentees" in coachs.mesures_du_match({}, {}, None, None), False)
+
+    def ligne_coach(coach, cote, corners, match):
+        return {"match_id": "m%d" % match, "cote": cote, "entraineur_id": coach, "nom": coach,
+                "equipe": "E" + coach, "adversaire": "X", "date": "2026-03-%02d" % (match % 28 + 1),
+                "competition": "Ligue Test", "systeme": "1-4-3-3" if match % 3 else "1-4-4-2",
+                "mesures": {"pour_corners": corners, "contre_corners": 5.0}}
+
+    lignes_c = [ligne_coach("C", "domicile", 5.0, j) for j in range(30)]
+    lignes_c += [ligne_coach("K", "domicile", 8.0, 100 + j) for j in range(30)]
+    fiches_c = coachs.construire(lignes_c)
+    ref = coachs.references(lignes_c)[("Ligue Test", "domicile")]["pour:corners"]
+    check("reference de competition entre les deux profils", 5.0 < ref < 8.0, True)
+    k = fiches_c["K"]["evenements"]["pour:corners"]
+    check("valeur brute de l'entraineur", k["valeur"], 8.0)
+    check("indice au-dessus de 1 pour qui obtient plus", k["indice"] > 1.0, True)
+    check("l'a priori tire l'indice vers 1",
+          k["indice"] < k["valeur"] / k["reference"], True)
+    check("systeme principal et repartition",
+          (fiches_c["K"]["systemes"]["principal"], fiches_c["K"]["systemes"]["releves"]),
+          ("1-4-3-3", 30))
+    peu = coachs.construire([ligne_coach("P", "domicile", 9.0, 200 + j) for j in range(3)]
+                            + lignes_c)["P"]
+    check("sous 10 matchs, aucune etiquette", peu["etiquettes"], [])
+
+    # Rotation : titulaires changes par rapport au match precedent de l'equipe.
+    onze_a = ["j%d" % i for i in range(11)]
+    onze_b = onze_a[:8] + ["n1", "n2", "n3"]
+    compo = [
+        {"match_id": "r1", "equipe": "R", "date": "2026-04-01", "titulaires": onze_a,
+         "entrees": [60, 75], "mesures": {"pour_buts": 1.0, "contre_buts": 1.0}},
+        {"match_id": "r2", "equipe": "R", "date": "2026-04-05", "titulaires": onze_b,
+         "entrees": [], "mesures": {"pour_buts": 2.0, "contre_buts": 0.0}},
+        {"match_id": "r3", "equipe": "R", "date": "2026-06-30", "titulaires": onze_a,
+         "entrees": [46], "mesures": {}},
+    ]
+    coachs.ajouter_compositions(compo)
+    check("premier match : pas de rotation mesurable", "rotation" in compo[0]["mesures"], False)
+    check("trois titulaires changes", compo[1]["mesures"]["rotation"], 3.0)
+    check("apres une longue coupure, pas de rotation", "rotation" in compo[2]["mesures"], False)
+    check("remplacements et premier changement",
+          (compo[0]["mesures"]["remplacements"], compo[0]["mesures"]["premier_changement"]), (2.0, 60.0))
+    check("points au score", (compo[0]["mesures"]["points"], compo[1]["mesures"]["points"]), (1.0, 3.0))
+
+    # Resume pour la fiche de match : un entraineur inconnu reste signale.
+    check("sans entraineur, pas de resume", coachs.resume("", "", "E"), None)
+    check("entraineur absent de la base",
+          coachs.resume("id-qui-n-existe-pas", "Inconnu I.", "E")["connu"], False)
+    check("discipline vide : aucun entraineur a resumer",
+          context.entraineurs_du_match(("A", "B"), {}), {})
+
+    print("\nZ11. Cotes plus / moins 2,5 buts : consensus, total recale, tirs cadres")
+    from ibet.modeles import buts as m_buts
+    from ibet.modeles.apports import corriger_par_le_marche
+    from ibet.modeles.tirs_cadres import COEFS_MARCHE as TC_1X2, COEFS_MARCHE_TOTAL as TC_TOT
+
+    releve = api_client._meilleures_cotes([
+        {"title": "A", "markets": [{"key": "totals", "outcomes": [
+            {"name": "Over", "point": 2.5, "price": 1.80}, {"name": "Under", "point": 2.5, "price": 2.00}]}]},
+        {"title": "B", "markets": [{"key": "totals", "outcomes": [
+            {"name": "Over", "point": 2.5, "price": 2.00}, {"name": "Under", "point": 2.5, "price": 1.80}]}]},
+    ])
+    check("consensus : moyenne des operateurs, marge retiree", releve["totaux_consensus"]["2.5"], [0.5, 2])
+    check("meilleure cote gardee a part", releve["totaux"]["Over|2.5"], 2.0)
+    check("match termine : aucune requete",
+          api_client.probabilite_plus_de_buts({"statut": "Termine"}), None)
+
+    mb = m_buts.ModeleButs()
+    lam_b = (1.4, 1.1)
+    intact_b = mb.caler(lam_b, {"totaux_marche": None}, 0.0, 1.173, 1.173)
+    check("sans cote 2,5, total intact", intact_b, (1.4, 1.1, None))
+    lh, la, tr = mb.caler(lam_b, {"totaux_marche": 0.75}, 0.0, 1.173, 1.173)
+    check("marche plus ouvert : total releve", lh + la > 2.5, True)
+    check("l'ecart entre les equipes est garde", round(lh - la, 6), 0.3)
+    p_apres = mb.probabilite_total(lh, la, 2.5, 0.0, 1.173)
+    cible = m_buts.POIDS_MODELE_TOTAL * tr["total_marche"]["p_plus_modele"] + \
+        (1 - m_buts.POIDS_MODELE_TOTAL) * 0.75
+    check("P(+2,5) recalee = melange modele / bookmakers", round(p_apres, 3), round(cible, 3))
+    lh2, la2, tr2 = mb.caler(lam_b, {"totaux_marche": 0.75, "marche": marche_p}, 0.0, 1.173, 1.173)
+    check("total et issue ensemble", ("total_marche" in tr2, "issue_marche" in tr2), (True, True))
+
+    un_x_deux = {"domicile": 0.5, "nul": 0.25, "exterieur": 0.25}
+    seul, _ = corriger_par_le_marche((4.0, 3.5), un_x_deux, TC_1X2, TC_TOT)
+    avec, tr_tc = corriger_par_le_marche((4.0, 3.5), dict(un_x_deux, plus_25=0.7), TC_1X2, TC_TOT)
+    check("tirs cadres : sans cote 2,5, repli sur le 1X2 seul",
+          seul, corriger_par_le_marche((4.0, 3.5), un_x_deux, TC_1X2)[0])
+    check("tirs cadres : match ouvert -> plus de tirs cadres", avec[0] > seul[0] and avec[1] > seul[1], True)
+    check("la trace garde p(+2,5)", tr_tc["p_plus_25"], 0.7)
+
+    print("\nZ12. Historique des arbitres (worldfootball) : saisons, rapprochement, a priori")
+    from ibet.modeles.discipline import Discipline as _Disc
+    from ibet.modeles.discipline import historique_anterieur, saison_de
+    from ibet.stockage import arbitres as _arb
+
+    check("saison : septembre ouvre la saison", saison_de("2026-09-27"), "2026-2027")
+    check("saison : mars ferme la precedente", saison_de("2026-03-01"), "2025-2026")
+    histo = [
+        {"saison": "2025-2026", "jaunes": 120.0, "attendus": 100.0, "matchs": 25.0},
+        {"saison": "2026-2027", "jaunes": 50.0, "attendus": 10.0, "matchs": 3.0},
+    ]
+    check("la saison du match est exclue", historique_anterieur(histo, "2026-09-01"),
+          (120.0, 100.0, 25.0))
+    check("et toute saison posterieure aussi", historique_anterieur(histo, "2026-03-01"),
+          (0.0, 0.0, 0.0))
+    disc = _Disc()
+    check("sans historique : a priori neutre, comme la 2.0.0",
+          (disc.arbitre("X", "2026-09-01")["rapport"], disc.arbitre("X", "2026-09-01")["variance"]),
+          (1.0, 1.0 / 40.0))
+    avec_h = disc.arbitre("X", "2026-09-01", histo)
+    check("avec historique : a priori = (120 + 20) / (100 + 20)",
+          round(avec_h["rapport"], 4), round(140 / 120, 4))
+    check("la trace de l'historique est dans le profil", avec_h["historique"]["matchs"], 25.0)
+    check("historique posterieur au match : sans effet",
+          disc.arbitre("X", "2026-03-01", histo)["rapport"], 1.0)
+
+    # Rapprochement des noms, sur une base fictive (aucune lecture de ibet.db).
+    lignes_reelles = _arb.lignes
+    _arb.lignes = lambda cle=None: [
+        dict(cle=_arb.cle_arbitre(nom, pays), nom=nom, pays=pays, competition="c",
+             saison="2025-2026", matchs=20.0, jaunes=80.0, jaunes_moyens=4.0)
+        for nom, pays in (("Jesús Gil Manzano", "Spain"), ("João Pinheiro", "Portugal"),
+                          ("José Munuera Montero", "Spain"), ("Juan Martínez Munuera", "Spain"),
+                          ("Dr. Matthias Jöllenbeck", "Germany"))
+    ]
+    _arb._INDEX.clear()
+    try:
+        idx = _arb._index()
+        check("nom de famille partiel", idx.retrouver("Manzano J.", "Esp"), "jesus gil manzano|spain")
+        check("nom de famille complet", idx.retrouver("Gil Manzano J.", "Esp"), "jesus gil manzano|spain")
+        check("pays different : ecarte", idx.retrouver("Pinheiro J.", "Bra"), None)
+        check("homonymes : le premier nom de famille departage",
+              (idx.retrouver("Munuera J.", "Esp"), idx.retrouver("Martinez J.", "Esp")),
+              ("jose munuera montero|spain", "juan martinez munuera|spain"))
+        check("un titre n'est pas une initiale", idx.retrouver("Jollenbeck M.", "Ger"),
+              "dr matthias jollenbeck|germany")
+        check("les attendus suivent la moyenne de la competition",
+              _arb.historique_de("Manzano J.", "Esp")[0]["attendus"], 80.0)
+    finally:
+        _arb.lignes = lignes_reelles
+        _arb._INDEX.clear()
+
+    print("\nZ13. Composeur : seulement des options disponibles chez les bookmakers")
+    from ibet.prevision import marche as _mc
+
+    fiche_coupon = {
+        "match": "Alpha - Beta", "match_id": "TEST",
+        "grandeurs": [{
+            "cle": "corners", "grandeur": "Corners",
+            # Echelle du total : la ligne principale (la plus proche de 50 %)
+            # est 9.5. Les corners ouvrent 3 lignes de part et d'autre au
+            # total : 6.5 a 12.5 sont ouvertes, 13.5 ne l'est pas.
+            "echelle_total": {"seuils": [6.5, 9.5, 12.5, 13.5],
+                              "probabilites": [0.93, 0.52, 0.20, 0.12]},
+            # Par equipe : Alpha ouvert autour de 5.5 (ecart 2 lignes), donc
+            # 2.5 n'est PAS ouvert pour Alpha.
+            "echelle_par_equipe": {"seuils": [2.5, 4.5, 5.5],
+                                   "Alpha": [0.95, 0.70, 0.50],
+                                   "Beta": [0.60, 0.30, 0.20]},
+        }],
+    }
+    ouvertes = _mc.lignes_ouvertes(fiche_coupon)
+    check("ligne principale ouverte", "Plus de 9.5 corners au total" in ouvertes, True)
+    check("ligne trop eloignee : fermee", "Plus de 13.5 corners au total" in ouvertes, False)
+    check("ligne d'equipe trop eloignee : fermee", "Alpha : plus de 2.5 corners" in ouvertes, False)
+    check("ligne d'equipe voisine : ouverte", "Alpha : plus de 4.5 corners" in ouvertes, True)
+    echelles_fiche = set(_mc.propositions_des_echelles(fiche_coupon))
+    check("option trop sure : cote trop basse",
+          _mc.disponible("Plus de 6.5 corners au total", 0.93, ouvertes, echelles_fiche),
+          "cote trop basse")
+    check("option sur une ligne fermee : ecartee",
+          _mc.disponible("Alpha : plus de 2.5 corners", 0.95, ouvertes, echelles_fiche),
+          "ligne non ouverte")
+    check("option jouable : retenue",
+          _mc.disponible("Alpha : plus de 4.5 corners", 0.70, ouvertes, echelles_fiche), None)
+    raisons: dict[str, int] = {}
+    conseils = _mc.conseils_du_modele(fiche_coupon, combien=3, ecartees=raisons)
+    check("aucun conseil au-dessus de ce que 3 bookmakers paient 1.15",
+          all(c["bookmakers"]["operateurs_ok"] >= 3 for c in conseils), True)
+    check("chaque conseil porte sa cote estimee", all(c["cote_estimee"] for c in conseils), True)
+    check("les options ecartees sont comptees", raisons.get("cote trop basse", 0) > 0, True)
+    check("cote minimale relevee a 1.30 : une option a 78 % est ecartee",
+          _mc.disponible("Alpha : plus de 4.5 corners", 0.78, ouvertes, echelles_fiche, 1.30),
+          "cote trop basse")
+    check("et une option a 70 % reste",
+          _mc.disponible("Alpha : plus de 4.5 corners", 0.70, ouvertes, echelles_fiche, 1.30), None)
+
+    print("\nZ14. Horloge fiable : l'ecart a l'heure reelle est corrige")
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+    from ibet.evaluation import verify as _verify
+    from ibet.sources import horloge as _h
+
+    fiche_hier = {"coup_denvoi_local": "2026-09-27 21:00"}
+    _h.fixer(0.0)
+    machine = _dt.now(_tz.utc)
+    _h.fixer(13 * 3600 + 32 * 60)
+    check("l'heure corrigee avance de l'ecart mesure",
+          round((_h.maintenant(_tz.utc) - machine).total_seconds() / 60), 13 * 60 + 32)
+    check("un ecart de 13 h 32 est signale", _h.etat()["machine_a_corriger"], True)
+    _h.fixer(30.0)
+    check("un ecart de 30 s ne l'est pas", _h.etat()["machine_a_corriger"], False)
+    # La decision « match termine » suit l'heure corrigee, pas celle de la machine.
+    _h.fixer(10 * 365 * 86400.0)
+    check("un match passe est vu termine avec l'heure corrigee",
+          _verify.is_due(fiche_hier, "Europe/Paris"), True)
+    _h.fixer(-10 * 365 * 86400.0)
+    check("et pas si l'heure reelle est anterieure", _verify.is_due(fiche_hier, "Europe/Paris"), False)
+    _h.fixer(0.0)
+
+    print("\nZ15. Plus / moins : sens d'une proposition, un seul « moins » par match")
+    check("sens : moins", _mc.sens_du_pari("Moins de 11.5 corners au total"), "moins")
+    check("sens : plus, par equipe", _mc.sens_du_pari("Alpha : plus de 2.5 buts"), "plus")
+    check("une issue n'a pas de sens", _mc.sens_du_pari("Victoire de l'une ou l'autre (pas de nul)"), None)
+    check("un duel non plus", _mc.sens_du_pari("Plus de corners pour Alpha"), None)
+    check("un combine non plus", _mc.sens_du_pari("Les deux equipes marquent et plus de 2.5 buts"), None)
+    fiche_moins = {
+        "match": "Alpha - Beta", "match_id": "TEST2",
+        "grandeurs": [
+            {"cle": "corners", "grandeur": "Corners",
+             "echelle_total": {"seuils": [8.5, 9.5, 10.5], "probabilites": [0.62, 0.50, 0.25]}},
+            {"cle": "buts", "grandeur": "Buts",
+             "echelle_total": {"seuils": [1.5, 2.5, 3.5], "probabilites": [0.70, 0.50, 0.27]}},
+        ],
+    }
+    conseils_moins = _mc.conseils_du_modele(fiche_moins, combien=3)
+    check("au plus un « moins » par match",
+          sum(_mc.sens_du_pari(c["pari"]) == "moins" for c in conseils_moins) <= 1, True)
+    check("les autres places vont aux « plus »",
+          any(_mc.sens_du_pari(c["pari"]) == "plus" for c in conseils_moins), True)
+
+    print("\nZ16. Emission : jamais apres le coup d'envoi (heure fiable)")
+    from datetime import timedelta as _td
+    from ibet.prevision import forecast as _fc
+
+    _h.fixer(0.0)
+    maintenant = _dt.now(_tz.utc)
+    def _match_dans(minutes: float) -> dict:
+        return {"kickoff_utc": (maintenant + _td(minutes=minutes)).isoformat()}
+    check("match dans 2 h : emis", _fc.trop_tard(_match_dans(120)), None)
+    check("match dans 3 min : refuse", (_fc.trop_tard(_match_dans(3)) or "").startswith("coup d'envoi dans"), True)
+    check("match commence : refuse", (_fc.trop_tard(_match_dans(-40)) or "").startswith("match commence"), True)
+    check("coup d'envoi inconnu : refuse", _fc.trop_tard({}), "coup d'envoi inconnu")
+    # L'horloge de la machine en retard de 13 h 32 : le match « dans 2 h » a
+    # l'heure de la machine est en realite joue depuis longtemps.
+    _h.fixer(13 * 3600 + 32 * 60)
+    check("horloge en retard : le match deja joue est refuse",
+          (_fc.trop_tard(_match_dans(120)) or "").startswith("match commence"), True)
+    _h.fixer(0.0)
 
     print()
     if failures:

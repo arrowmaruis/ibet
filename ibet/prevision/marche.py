@@ -1130,12 +1130,114 @@ def meilleures_options(
     return retenues
 
 
+_SENS = re.compile(r"\b(plus|moins) de \d", re.IGNORECASE)
+
+
+def sens_du_pari(pari: str) -> str | None:
+    """« plus », « moins », ou None (issue, duel, combine...).
+
+    Le seuil exige un chiffre : « Victoire de l'une ou l'autre » contient
+    « s de » et ne doit pas passer pour un total.
+    """
+    libelle = pari.lower()
+    if " et " in libelle or " pour " in libelle:
+        return None
+    trouve = _SENS.search(libelle)
+    return trouve.group(1).lower() if trouve else None
+
+
+def lignes_ouvertes(fiche: dict[str, Any]) -> set[str]:
+    """Les lignes des echelles qu'un bookmaker ouvre vraiment, les deux faces.
+
+    Un bookmaker n'ouvre pas toutes les lignes : il place sa ligne PRINCIPALE
+    la ou le depassement vaut environ 50 %, puis quelques lignes de part et
+    d'autre (« lignes alternatives »). « Celtic : plus de 2.5 corners » n'existe
+    pas quand il ouvre Celtic autour de 6.5 -- et c'est pourtant ce que le
+    composeur proposait, parce que c'est la ligne la plus sure.
+
+    Pour chaque echelle de la fiche (total, puis chaque equipe), la ligne
+    principale est celle dont la probabilite est la plus proche de 50 % ; sont
+    ouvertes celles qui en sont a `ecart_total` / `ecart_equipe` lignes au plus,
+    dans la gamme du modele de la grandeur (`gamme_total` / `gamme_equipe`) --
+    les memes reglages que les fiches emploient depuis le moteur 1.1.0.
+    """
+    from ibet import modeles
+
+    par_libelle = {m.libelle.lower(): m for m in modeles.MODELES}
+    ouvertes: set[str] = set()
+
+    def garder(seuils, probabilites, ecart, gamme):
+        if not seuils:
+            return []
+        principale = min(zip(seuils, probabilites), key=lambda t: abs(float(t[1]) - 0.5))[0]
+        return [
+            s for s in seuils
+            if abs(float(s) - float(principale)) <= ecart + 1e-9
+            and (not gamme or gamme[0] - 1e-9 <= float(s) <= gamme[1] + 1e-9)
+        ]
+
+    for grandeur in fiche.get("grandeurs") or []:
+        nom = (grandeur.get("grandeur") or grandeur.get("libelle") or "").lower()
+        modele = par_libelle.get(nom)
+        if not modele:
+            continue
+        total = grandeur.get("echelle_total") or {}
+        for seuil in garder(total.get("seuils") or [], total.get("probabilites") or [],
+                            modele.ecart_total, modele.gamme_total):
+            ouvertes.add("Plus de %g %s au total" % (seuil, nom))
+            ouvertes.add("Moins de %g %s au total" % (seuil, nom))
+        equipes = grandeur.get("echelle_par_equipe") or {}
+        for equipe, valeurs in equipes.items():
+            if equipe == "seuils" or not isinstance(valeurs, list):
+                continue
+            for seuil in garder(equipes.get("seuils") or [], valeurs,
+                                modele.ecart_equipe, modele.gamme_equipe):
+                ouvertes.add("%s : plus de %g %s" % (equipe, seuil, nom))
+                ouvertes.add("%s : moins de %g %s" % (equipe, seuil, nom))
+    return ouvertes
+
+
+def disponible(
+    pari: str,
+    probabilite: float,
+    ouvertes: set[str],
+    echelles: set[str],
+    cote_min: float | None = None,
+) -> str | None:
+    """None si l'option se trouve chez les bookmakers, sinon la raison.
+
+    Deux conditions, toutes deux necessaires :
+
+      - la LIGNE est ouverte (`lignes_ouvertes`) ; les issues le sont toujours ;
+      - la COTE est jouable : trois bookmakers de reference au moins la paient
+        `offres.COTE_MIN` (1.15) ou plus (`offres.jouable`). Au-dessus d'environ
+        82 % (buts, issue) ou 80 % (corners, tirs, cartons), la cote tombe
+        sous 1.15 : l'option n'est pas affichee, ou a une cote qui ne rapporte
+        rien et qu'aucun coupon n'accepte.
+
+    `cote_min` releve cette exigence : a 1.30, seules restent les options que
+    trois bookmakers paient 1.30 ou plus -- moins probables, mieux payees.
+    """
+    from ibet.modeles import bookmakers, offres
+
+    if pari in echelles and pari not in ouvertes:
+        return "ligne non ouverte"
+    type_, _ = type_de_conseil({"pari": pari})
+    special = type_ in ("corners", "tirs", "cartons")
+    seuil = max(offres.COTE_MIN, cote_min or 0.0)
+    if probabilite > offres.OFFER_CEILING or not bookmakers.jouable(probabilite, seuil, special):
+        return "cote trop basse"
+    return None
+
+
 def conseils_du_modele(
     fiche: dict[str, Any],
     types: Sequence[str] = (),
     portees: Sequence[str] = (),
     combien: int = 1,
     minimum: float = 0.60,
+    ecartees: dict[str, int] | None = None,
+    cote_min: float | None = None,
 ) -> list[dict[str, Any]]:
     """Les propositions dont le modele est le plus sur, sans aucune cote.
 
@@ -1158,10 +1260,20 @@ def conseils_du_modele(
 
     Une seule proposition par FAMILLE, comme ailleurs : sans cette regle, les
     trois meilleures seraient trois seuils voisins de la meme echelle.
+
+    Seules les options que l'on TROUVE chez les bookmakers sont retenues
+    (`disponible`) : ligne ouverte, cote jouable. Sans ce filtre, le composeur
+    proposait des lignes que personne n'affiche -- sur les cinq premiers coupons
+    enregistres, une option sur trente seulement etait jouable. `ecartees`,
+    s'il est fourni, compte les options ecartees par raison.
     """
+    from ibet.modeles import bookmakers, offres
+
     lignes = propositions_des_echelles(fiche)
     if not lignes:
         return []
+    echelles = set(lignes)
+    ouvertes = lignes_ouvertes(fiche)
 
     # Les issues aussi : elles ne sont pas dans les echelles, mais un conseil
     # « victoire de A » est le plus lisible qui soit.
@@ -1181,27 +1293,49 @@ def conseils_du_modele(
         nom = equipes[0] if cle == "domicile" else equipes[1]
         lignes[gabarit % nom if "%s" in gabarit else gabarit] = float(probabilite)
 
-    candidats = [
-        {
+    candidats = []
+    for libelle, probabilite in lignes.items():
+        if probabilite < minimum:
+            continue
+        raison = disponible(libelle, probabilite, ouvertes, echelles, cote_min)
+        if raison:
+            if ecartees is not None:
+                ecartees[raison] = ecartees.get(raison, 0) + 1
+            continue
+        type_, _ = type_de_conseil({"pari": libelle})
+        special = type_ in ("corners", "tirs", "cartons")
+        candidats.append({
             "pari": libelle,
             "probabilite": probabilite,
             "match": fiche.get("match") or fiche.get("libelle", ""),
             "match_id": fiche.get("match_id", ""),
-        }
-        for libelle, probabilite in lignes.items()
-        if minimum <= probabilite <= 0.95
-    ]
+            # Ce que l'option devrait payer : sans cote relevee, c'est une
+            # ESTIMATION d'apres la marge mesuree de chaque bookmaker.
+            "cote_estimee": offres.cote_estimee(probabilite),
+            "bookmakers": bookmakers.resume(
+                probabilite, max(offres.COTE_MIN, cote_min or 0.0), special
+            ),
+        })
     candidats = filtrer_conseils(candidats, types, portees)
 
     retenus: list[dict[str, Any]] = []
     familles: set[str] = set()
+    un_moins = False
     for candidat in sorted(
         candidats, key=lambda c: c["probabilite"], reverse=True
     ):
         famille = _famille_du_pari(candidat)
         if famille in familles:
             continue
+        # Un seul « moins de » par match : ils echouent ENSEMBLE. Un match qui
+        # s'ouvre fait tomber d'un coup tous ses « moins » -- Racing Cordoba -
+        # Godoy Cruz (2-2) en a fait echouer sept le 27/09/2026. Deux « moins »
+        # du meme match dans un coupon, c'est deux fois le meme pari.
+        moins = sens_du_pari(candidat["pari"]) == "moins"
+        if moins and un_moins:
+            continue
         familles.add(famille)
+        un_moins = un_moins or moins
         retenus.append(dict(candidat, famille=famille))
         if len(retenus) >= combien:
             break

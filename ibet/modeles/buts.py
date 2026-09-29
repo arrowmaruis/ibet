@@ -17,7 +17,7 @@ from typing import Any
 
 from .base import ModeleEvenement
 from .issue import ModeleIssue
-from .lois import _grid_probability, score_matrix
+from .lois import _blend, _grid_probability, score_matrix
 
 # Seuils usuels, exprimes en demi-unites pour qu'aucun resultat ne tombe dessus.
 GOALS_LINE = 2.5
@@ -136,10 +136,30 @@ def melanger_lambdas(
 # matrice est moins juste que celui du bookmaker.
 POIDS_MODELE_ISSUE = 0.1
 
+# Part du modele dans P(plus de 2,5 buts) quand la cote plus / moins 2,5 des
+# bookmakers est connue ; le reste va au bookmaker. Le TOTAL attendu est recale
+# pour que la loi du modele reproduise cette probabilite, l'ecart entre les deux
+# equipes restant le sien : toutes les lignes de buts suivent (voir `caler`).
+#
+# Mesure sur 1 784 matchs de 2026 apparies aux cotes plus / moins 2,5 de Bet365
+# (football-data.co.uk), modele rejoue en walk-forward, Brier par ligne :
+#
+#                          +1.5     +2.5     +3.5     +4.5
+#     modele seul         0.1695   0.2434   0.2136   0.1287
+#     total recale, 30 %  0.1671   0.2400   0.2112   0.1281
+#                        (t=-3.4) (t=-3.0) (t=-2.4) (t=-1.1)
+#
+# Melanger la seule probabilite +2,5 ameliore cette ligne et aucune autre ;
+# recaler le total ameliore aussi 1,5 et 3,5, dont aucune cote n'est relevee.
+POIDS_MODELE_TOTAL = 0.3
+
+# Ligne des bookmakers sur laquelle le total est recale.
+LIGNE_TOTAL_MARCHE = 2.5
+
 
 class ModeleButs(ModeleEvenement):
     cle = "buts"
-    version = "2.0.0"
+    version = "2.1.0"
     libelle = "Buts"
     champ = None
     seuil = GOALS_LINE
@@ -208,16 +228,65 @@ class ModeleButs(ModeleEvenement):
         retiree. Elles sont publiees dans la trace `marche` de la fiche, que
         `completer` lit pour combiner l'issue. Sans elles, rien ne change.
         """
-        marche = (apports or {}).get("marche")
+        apports = apports or {}
+        trace: dict[str, Any] = {}
+        lam = self._caler_total(lam, apports.get("totaux_marche"), rho,
+                                phi_home, phi_away, trace)
+        marche = apports.get("marche")
         if not marche or any(k not in marche for k in ("domicile", "nul", "exterieur")):
-            return lam[0], lam[1], None
+            return lam[0], lam[1], (trace or None)
         return lam[0], lam[1], {
+            **trace,
             "poids_modele": POIDS_MODELE_ISSUE,
             # Non arrondie : c'est elle qui entre dans le melange.
             "issue_marche": {
                 k: float(marche[k]) for k in ("domicile", "nul", "exterieur")
             },
         }
+
+    def _caler_total(
+        self,
+        lam: tuple[float, float],
+        p_plus: float | None,
+        rho: float,
+        phi_home: float,
+        phi_away: float,
+        trace: dict[str, Any],
+    ) -> tuple[float, float]:
+        """Total recale sur P(plus de 2,5) combinee modele / bookmakers.
+
+        P(plus de 2,5) croit avec le total a ecart fixe : une dichotomie
+        suffit. Sans cote, les nombres attendus ressortent intacts.
+        """
+        if p_plus is None or not 0.0 < float(p_plus) < 1.0:
+            return lam
+        ecart = lam[0] - lam[1]
+
+        def p_modele(total: float) -> float:
+            lh, la = (total + ecart) / 2, (total - ecart) / 2
+            return self.probabilite_total(
+                lh, la, LIGNE_TOTAL_MARCHE, rho, _blend(phi_home, phi_away, lh, la)
+            )
+
+        avant = p_modele(lam[0] + lam[1])
+        cible = POIDS_MODELE_TOTAL * avant + (1 - POIDS_MODELE_TOTAL) * float(p_plus)
+        bas, haut = abs(ecart) + 2 * LAMBDA_MIN, 12.0
+        total = lam[0] + lam[1]
+        for _ in range(40):
+            total = (bas + haut) / 2
+            if p_modele(total) < cible:
+                bas = total
+            else:
+                haut = total
+        trace["total_marche"] = {
+            "ligne": LIGNE_TOTAL_MARCHE,
+            "poids_modele": POIDS_MODELE_TOTAL,
+            "p_plus_modele": round(avant, 4),
+            "p_plus_marche": round(float(p_plus), 4),
+            "total_avant": round(lam[0] + lam[1], 3),
+            "total_apres": round(total, 3),
+        }
+        return (total + ecart) / 2, (total - ecart) / 2
 
     def completer(
         self,
@@ -237,7 +306,7 @@ class ModeleButs(ModeleEvenement):
         """
         issue = self.issue.prevoir(lam_home, lam_away, rho, phi_home, phi_away)
         marche = entry.get("marche")
-        if marche:
+        if marche and marche.get("issue_marche"):
             modele = issue["resultat"]
             marche["issue_modele"] = {k: round(v, 4) for k, v in modele.items()}
             issue["resultat"] = {

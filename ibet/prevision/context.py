@@ -73,7 +73,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, NamedTuple, Sequence
 
-from ibet.sources import api_client
+from ibet.sources import api_client, horloge
 
 # ---------------------------------------------------------------------------
 # Reglages
@@ -1939,6 +1939,22 @@ _INDEX_DISCIPLINE: dict[str, Any] = {}
 INSTALLATION_ENTRAINEUR = 8
 
 
+def _historique_arbitre(arbitre: str, arbitre_pays: str) -> list[dict[str, Any]]:
+    """Lignes par saison de l'arbitre (worldfootball), ou [] s'il n'y est pas.
+
+    Une base illisible vaut neutre : la prevision retombe alors sur le profil
+    tire des seules feuilles, celui de la 2.0.0.
+    """
+    if not arbitre:
+        return []
+    try:
+        from ibet.stockage import arbitres
+
+        return arbitres.historique_de(arbitre, arbitre_pays)
+    except Exception:  # noqa: BLE001 - une base illisible vaut neutre
+        return []
+
+
 def _index_discipline(date: str):
     from ibet.modeles.discipline import Discipline
     from ibet.stockage import store
@@ -1969,12 +1985,18 @@ def discipline_du_match(
     """
     date = (match.get("kickoff_utc") or match.get("date") or "")[:10]
     if not date:
-        date = datetime.now(timezone.utc).date().isoformat()
+        date = horloge.maintenant(timezone.utc).date().isoformat()
     from ibet.modeles.discipline import cle_arbitre
 
     index = _index_discipline(date)
     rendu: dict[str, Any] = {
-        "arbitre": dict(index.arbitre(cle_arbitre(arbitre, arbitre_pays), date), arbitre=arbitre)
+        # L'historique worldfootball de l'arbitre (saisons anterieures) sert
+        # d'a priori a son profil tire des feuilles : cartons 3.0.0.
+        "arbitre": dict(
+            index.arbitre(cle_arbitre(arbitre, arbitre_pays), date,
+                          _historique_arbitre(arbitre, arbitre_pays)),
+            arbitre=arbitre,
+        )
     }
     for cote, equipe in zip(("domicile", "exterieur"), teams):
         bloc = (compositions or {}).get(cote) or {}
@@ -1983,7 +2005,23 @@ def discipline_du_match(
         coach = (bloc.get("entraineur") or {}).get("id") or index.entraineur_en_poste(equipe).get("id", "")
         entraineur = index.facteur_entraineur(equipe, coach, date, INSTALLATION_ENTRAINEUR)
         entraineur["nom"] = (bloc.get("entraineur") or {}).get("nom") or index.entraineur_en_poste(equipe).get("nom", "")
+        entraineur["id"] = coach
         rendu[cote] = {"joueurs": joueurs, "entraineur": entraineur}
+    return rendu
+
+
+def entraineurs_du_match(
+    teams: tuple[str, str], discipline: dict[str, Any]
+) -> dict[str, Any]:
+    """Resume de chaque entraineur, pour la fiche. Vide si la base est absente."""
+    from ibet.stockage import entraineurs
+
+    rendu: dict[str, Any] = {}
+    for cote, equipe in zip(("domicile", "exterieur"), teams):
+        coach = ((discipline or {}).get(cote) or {}).get("entraineur") or {}
+        resume = entraineurs.resume(coach.get("id", ""), coach.get("nom", ""), equipe)
+        if resume:
+            rendu[cote] = resume
     return rendu
 
 
@@ -2025,7 +2063,7 @@ def styles_du_match(
     """
     date = (match.get("kickoff_utc") or match.get("date") or "")[:10]
     if not date:
-        date = datetime.now(timezone.utc).date().isoformat()
+        date = horloge.maintenant(timezone.utc).date().isoformat()
     index = _index_styles(date)
     rendu: dict[str, Any] = {}
     for grandeur in ("corners", "tirs_cadres"):
@@ -2386,6 +2424,15 @@ def collecter(
             "moyennes": api_client.odds_for(match, "moyennes", use_cache) or cotes,
             "meilleures": cotes,
         }
+    # Plus / moins 2,5 buts, consensus des bookmakers (the-odds-api). Meme
+    # coupure que le 1X2, et seulement pour un match a venir : l'agregateur ne
+    # publie rien d'autre, et chaque appel coute du quota.
+    totaux_marche = None
+    if not retrospectif and avec_cotes:
+        try:
+            totaux_marche = api_client.probabilite_plus_de_buts(match, 2.5, use_cache)
+        except api_client.ApiError:
+            totaux_marche = None
 
     table = {} if retrospectif else api_client.standings(match, tz_name, use_cache)
     infos = api_client.match_info(match, use_cache)
@@ -2451,14 +2498,19 @@ def collecter(
         # 14 : taille de l'echantillon -- seconde passe (resume tout le reste).
     ]
 
+    discipline = discipline_du_match(
+        match, teams, arbitre, compositions, infos.get("arbitre_pays", "")
+    )
     return {
         "criteres": criteres,
         "poids_entrees": poids_entrees,
         # L'apport du modele des cartons. En retrospectif, l'arbitre est coupe
         # comme pour le critere 12 : seul son inconnu (la variance) joue.
-        "discipline": discipline_du_match(
-            match, teams, arbitre, compositions, infos.get("arbitre_pays", "")
-        ),
+        "discipline": discipline,
+        # Les deux entraineurs, lus dans la base des entraineurs. Lecture
+        # seulement : la mesure n'a trouve aucun apport aux previsions
+        # (`entraineurs.resume`).
+        "entraineurs": entraineurs_du_match(teams, discipline),
         # L'apport des corners et des tirs cadres : les styles des joueurs.
         "styles": styles_du_match(match, teams, compositions),
         "poids": poids,
@@ -2469,6 +2521,7 @@ def collecter(
         "meteo": meteo,
         "absences": absences,
         "cotes": marche,
+        "totaux_marche": totaux_marche,
         "classement_disponible": bool(table),
         "sources": {
             "classement": bool(table),

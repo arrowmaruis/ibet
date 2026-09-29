@@ -9,7 +9,50 @@ combinés).
 
 ---
 
-## 2.0.0 — en service depuis le 2026-09-27
+## 2.1.0 — en service depuis le 2026-09-28
+
+**Changement** : quand la cote plus / moins 2,5 buts est relevée avant le match
+(the-odds-api, consensus des opérateurs, marge de chacun retirée), le **total
+attendu est recalé** pour que P(plus de 2,5) vaille 30 % celle du modèle et
+70 % celle des bookmakers (`POIDS_MODELE_TOTAL`). L'écart entre les deux
+équipes reste celui du modèle ; toutes les lignes de buts suivent.
+**Pourquoi** : sur les totaux, le modèle est proche des bookmakers mais
+derrière (Brier +2,5 : 0.2434 contre 0.2401 pour Bet365).
+**Mesure avant adoption** : 1 784 matchs de 2026 appariés aux cotes plus /
+moins 2,5 de Bet365 (football-data.co.uk), modèle rejoué en walk-forward :
+
+| Ligne | Modèle seul | Probabilité +2,5 mélangée | **Total recalé, 30 %** | t |
+|---|---|---|---|---|
+| +1.5 | 0.1695 | 0.1695 | **0.1671** | −3.4 |
+| +2.5 | 0.2434 | 0.2401 | **0.2400** | −3.0 |
+| +3.5 | 0.2136 | 0.2136 | **0.2112** | −2.4 |
+| +4.5 | 0.1287 | 0.1287 | 0.1281 | −1.1 |
+
+Mélanger la seule probabilité +2,5 n'améliore que cette ligne ; recaler le
+total améliore aussi 1,5 et 3,5, pour lesquelles aucune cote n'est relevée.
+
+### Ce que fait la version
+- Tout ce que fait la 2.0.0.
+- `caler` : si `apports["totaux_marche"]` (P(+2,5) du consensus) est connu,
+  recherche par dichotomie du total dont P(+2,5) vaut la cible, écart fixé ;
+  trace `marche.total_marche` (P du modèle, P du marché, total avant / après).
+- Relevé : `api_client.probabilite_plus_de_buts`, appelé par
+  `context.collecter` **seulement pour un match à venir** et hors rétrospectif.
+  Compétitions couvertes : celles de `CLES_AGREGATEUR` ; sans clé
+  `ODDS_API_KEY`, rien ne change.
+
+### Points faibles
+- Couverture limitée aux compétitions de l'agrégateur (une quarantaine), et
+  quota mensuel : un appel par compétition et par jour (deux crédits).
+- Mesure faite contre Bet365 ; le consensus the-odds-api mélange d'autres
+  opérateurs européens. À re-mesurer sur les fiches 2.1.0.
+
+### Mesures en service
+Pas encore de fiche tranchée en 2.1.0.
+
+---
+
+## 2.0.0 — retirée le 2026-09-28
 
 **Changement** : les notes attaque / défense (`ibet/prevision/forces.py`) sont estimées au
 **maximum de vraisemblance** sur tout le corpus, et non plus apprises match

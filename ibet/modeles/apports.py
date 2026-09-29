@@ -36,6 +36,7 @@ def corriger_par_le_marche(
     lam: tuple[float, float],
     marche: dict[str, float] | None,
     coefs: dict[str, tuple[float, float, float]] | None,
+    coefs_total: dict[str, tuple[float, float, float, float]] | None = None,
 ) -> tuple[tuple[float, float], dict[str, Any] | None]:
     """Nombres attendus corriges par les probabilites 1X2 du marche (marge
     retiree : {"domicile", "nul", "exterieur"}), et la trace."""
@@ -45,14 +46,24 @@ def corriger_par_le_marche(
         pd, pe = float(marche["domicile"]), float(marche["exterieur"])
     except (KeyError, TypeError, ValueError):
         return lam, None
+    # Avec la cote plus / moins 2,5 buts, le jeu complet de coefficients (une
+    # 4e variable : p(+2,5) - 0,5) ; sans elle, le jeu 1X2 seul, en repli.
+    plus_25 = marche.get("plus_25")
+    complet = plus_25 is not None and coefs_total is not None
+    jeu = coefs_total if complet else coefs
     rendu = []
     for rang, (cote, ecart) in enumerate((("domicile", pd - pe), ("exterieur", pe - pd))):
-        a, b, c = coefs[cote]
-        brut = math.exp(a + b * math.log(max(lam[rang], 1e-6)) + c * ecart)
+        a, b, c = jeu[cote][:3]
+        exposant = a + b * math.log(max(lam[rang], 1e-6)) + c * ecart
+        if complet:
+            exposant += jeu[cote][3] * (float(plus_25) - 0.5)
+        brut = math.exp(exposant)
         rendu.append(max(lam[rang] / BORNE_MARCHE, min(lam[rang] * BORNE_MARCHE, brut)))
     trace = {"p_domicile": round(pd, 3), "p_exterieur": round(pe, 3),
              "lambda_avant_marche": (round(lam[0], 2), round(lam[1], 2)),
              "lambda_apres_marche": (round(rendu[0], 2), round(rendu[1], 2))}
+    if complet:
+        trace["p_plus_25"] = round(float(plus_25), 3)
     return (rendu[0], rendu[1]), trace
 
 
@@ -69,12 +80,16 @@ class AvecApports:
 
     poids_styles = 0.0
     coefs_marche: dict[str, tuple[float, float, float]] | None = None
+    # Jeu complet, avec la cote plus / moins 2,5 buts (4e coefficient).
+    coefs_marche_total: dict[str, tuple[float, float, float, float]] | None = None
 
     def ajuster(self, lam, apports):
         if not apports:
             return lam[0], lam[1], None
         trace: dict[str, Any] = {}
-        lam, marche = corriger_par_le_marche(lam, apports.get("marche"), self.coefs_marche)
+        lam, marche = corriger_par_le_marche(
+            lam, apports.get("marche"), self.coefs_marche, self.coefs_marche_total
+        )
         if marche:
             trace["marche"] = marche
         ld, le, st = styles.appliquer(lam, apports.get("styles"), self.poids_styles)

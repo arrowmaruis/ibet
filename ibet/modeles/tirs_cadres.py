@@ -36,10 +36,24 @@ COEFS_MARCHE = {
     "exterieur": (0.2536, 0.8456, 0.4721),
 }
 
+# --- 2.1.0 : avec la cote plus / moins 2,5 buts -------------------------------
+#
+# Jeu complet de la meme mesure : 4e coefficient sur p(+2,5) - 0,5.
+# Log-vraisemblance +0.0999 contre +0.0827 pour le 1X2 seul. Employe quand la
+# cote 2,5 est relevee avant le match (the-odds-api, consensus des operateurs) ;
+# sinon, repli sur COEFS_MARCHE. Coefficients ajustes sur la cote MOYENNE
+# d'OUVERTURE (football-data, Avg>2.5, marge retiree par normalisation) ; le
+# consensus en service retire la marge operateur par operateur, puis moyenne,
+# et il est releve a l'emission : ecart faible, mais pas nul.
+COEFS_MARCHE_TOTAL = {
+    "domicile": (0.4546, 0.6421, 0.4787, 0.6146),
+    "exterieur": (0.4248, 0.7180, 0.4997, 0.4599),
+}
+
 
 class ModeleTirsCadres(AvecApports, ModeleParEquipe):
     cle = "tirs_cadres"
-    version = "2.0.0"
+    version = "2.1.0"
     libelle = "Tirs cadres"
     champ = "tirs_cadres"
     seuil = SHOTS_LINE
@@ -57,3 +71,4 @@ class ModeleTirsCadres(AvecApports, ModeleParEquipe):
     calibration = CALIBRATION
     poids_styles = POIDS_STYLES
     coefs_marche = COEFS_MARCHE
+    coefs_marche_total = COEFS_MARCHE_TOTAL

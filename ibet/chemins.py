@@ -6,8 +6,9 @@ reconstruire un chemin a partir de son propre emplacement : deplacer un module
 ne doit jamais deplacer ses donnees.
 
     donnees/
-      ibet.db                     previsions, resultats, cotes, feuilles, joueurs
-      arbitres.db                 base des arbitres
+      ibet.db                     previsions, resultats, cotes, feuilles, joueurs,
+                                  arbitres (`python -m ibet arbitres`)
+      entraineurs.db              base des entraineurs (`python -m ibet entraineurs`)
       forces.json                 notes attaque / defense (`python -m ibet forces`)
       predictions_ouvertes.json   fichier historique, avant la base SQLite
       cache/                      reponses des sources, pour economiser le quota
@@ -26,7 +27,7 @@ RACINE = Path(__file__).resolve().parent.parent
 DONNEES = RACINE / "donnees"
 
 BASE = DONNEES / "ibet.db"
-BASE_ARBITRES = DONNEES / "arbitres.db"
+BASE_ENTRAINEURS = DONNEES / "entraineurs.db"
 FORCES = DONNEES / "forces.json"
 HISTORIQUE_JSON = DONNEES / "predictions_ouvertes.json"
 CACHE = DONNEES / "cache"

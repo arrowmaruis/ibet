@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from ibet.prevision import context, forces, predict
-from ibet.sources import api_client
+from ibet.sources import api_client, horloge
 from ibet.stockage import store
 
 load_dotenv()
@@ -44,6 +44,38 @@ FORM_DEPTH = 10
 # Plafond de previsions par execution. Chacune coute une vingtaine de requetes :
 # sans plafond, une journee complete en demanderait des dizaines de milliers.
 DEFAULT_MAX = 10
+
+# Une fiche n'est emise que si le match commence dans plus de MARGE_MINUTES,
+# a l'heure FIABLE (`horloge`). Le 27/09/2026, l'horloge de l'ordinateur
+# avait 13 h 32 de retard : six fiches ont ete emises alors que les matchs
+# etaient deja joues, et rien ne l'a empeche. Une prevision emise apres le
+# coup d'envoi n'en est pas une -- elle fausse toute mesure qui la compte.
+MARGE_MINUTES = 5.0
+
+
+def minutes_avant_coup_denvoi(match: dict[str, Any]) -> float | None:
+    """Minutes entre maintenant (heure fiable) et le coup d'envoi ; None si
+    le coup d'envoi est inconnu. Negatif : le match a commence."""
+    brut = match.get("kickoff_utc") or ""
+    try:
+        coup = datetime.fromisoformat(brut)
+    except ValueError:
+        return None
+    if coup.tzinfo is None:
+        coup = coup.replace(tzinfo=timezone.utc)
+    return (coup - horloge.maintenant(timezone.utc)).total_seconds() / 60.0
+
+
+def trop_tard(match: dict[str, Any]) -> str | None:
+    """La raison de ne pas emettre, ou None si le match est assez loin."""
+    minutes = minutes_avant_coup_denvoi(match)
+    if minutes is None:
+        return "coup d'envoi inconnu"
+    if minutes < MARGE_MINUTES:
+        if minutes < 0:
+            return "match commence depuis %d min" % round(-minutes)
+        return "coup d'envoi dans %d min (minimum %d)" % (round(minutes), MARGE_MINUTES)
+    return None
 
 # Competitions retenues par `--majeures`. Une journee complete compte plus de
 # quatre cents matchs a venir, repartis sur deux cents competitions : sans
@@ -192,7 +224,14 @@ def to_record(
     """Fiche complete, prete a etre enregistree."""
     teams: tuple[str, str] = tuple(prediction["equipes"])  # type: ignore[assignment]
     return {
-        "emis_le": datetime.now(ZoneInfo(tz_name)).isoformat(timespec="seconds"),
+        "emis_le": horloge.maintenant(ZoneInfo(tz_name)).isoformat(timespec="seconds"),
+        # Delai reel entre l'emission et le coup d'envoi : ce qui prouve que la
+        # fiche est une PREVISION. Une fiche sans ce champ date d'avant la garde.
+        "minutes_avant_coup_denvoi": (
+            round(minutes_avant_coup_denvoi(match), 1)
+            if minutes_avant_coup_denvoi(match) is not None
+            else None
+        ),
         "statut_a_l_emission": match.get("statut", ""),
         "match_id": match.get("match_id", ""),
         "match": "%s - %s" % (match["domicile"], match["exterieur"]),
@@ -206,6 +245,8 @@ def to_record(
         # l'engagement : relire une fiche avec la meteo ou le classement
         # d'aujourd'hui ne serait plus relire la prevision qui a ete emise.
         "contexte": prediction.get("contexte"),
+        # Les deux entraineurs, pour lire le match : systeme, style, anciennete.
+        "entraineurs": prediction.get("entraineurs"),
         "confiance": prediction.get("confiance"),
         "resultat_reel": None,
     }
@@ -471,12 +512,21 @@ def emit(
                 return emitted, warnings
             if match.get("match_id") in known:
                 continue
+            libelle = "%s - %s" % (match["domicile"], match["exterieur"])
+            raison = trop_tard(match)
+            if raison:
+                warnings.append("%s : non emise, %s" % (libelle, raison))
+                continue
             try:
                 record = forecast_match(match, tz_name, use_cache, avec_contexte)
             except (predict.NotEnoughData, api_client.ApiError) as exc:
-                warnings.append(
-                    "%s - %s : %s" % (match["domicile"], match["exterieur"], exc)
-                )
+                warnings.append("%s : %s" % (libelle, exc))
+                continue
+            # Deuxieme controle : le calcul (reseau, contexte) peut prendre
+            # plusieurs minutes, et le match avoir commence entre-temps.
+            raison = trop_tard(match)
+            if raison:
+                warnings.append("%s : non emise, %s" % (libelle, raison))
                 continue
             store.save(record)
             emitted += 1
@@ -558,7 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Erreur : %s" % exc, file=sys.stderr)
         return 1
 
-    start = args.date or datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+    start = args.date or horloge.maintenant(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
     try:
         api_client.validate_date(start)
     except api_client.ApiError as exc:

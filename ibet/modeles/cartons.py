@@ -40,6 +40,21 @@ CALIBRATION = 1.0
 #   entraineur (nouvel arrivant)       +0.0013 (t = +0.5) : 0
 # Les deux derniers sont CALCULES et AFFICHES dans la fiche, sans rien
 # deplacer -- meme regle que les criteres de contexte a poids nul.
+#
+# --- 3.0.0 : historique de l'arbitre (worldfootball.net) ---------------------
+#
+# Le profil de l'arbitre ne part plus d'un a priori neutre (rapport 1) mais de
+# ce qu'il a montre les saisons PRECEDENTES dans 25 competitions europeennes
+# (`stockage/arbitres.py`, `Discipline.arbitre(..., historique=...)`). Les
+# feuilles affinent ensuite. Aucun poids ci-dessous n'a change : le reglage par
+# defaut (lissage 20, poids 0, puissance 0.5) a ete fixe AVANT la mesure, et le
+# meilleur reglage des anciens matchs (puissance 1) perdait sur les recents.
+#
+# Mesure, historique contre 2.0.0, match par match :
+#   60 % anciens (1 573)          +0.0141 (t = +4.5)
+#   40 % recents (1 049)          +0.0018 (t = +0.5)
+#   saison 2025-26, arbitre connu +0.0228 (t = +4.3, n = 1 035)
+#   saison 2026-27, arbitre connu +0.0015 (t = +0.2, n = 311)
 POIDS_ARBITRE = 0.5
 POIDS_JOUEURS = 0.0
 POIDS_ENTRAINEUR = 0.0
@@ -61,7 +76,7 @@ def _borne(facteur: float) -> float:
 
 class ModeleCartonsJaunes(ModeleParEquipe):
     cle = "cartons_jaunes"
-    version = "2.0.0"
+    version = "3.0.0"
     libelle = "Cartons jaunes"
     champ = "cartons_jaunes"
     seuil = CARDS_LINE

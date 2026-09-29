@@ -353,6 +353,9 @@ def build(
             "marche": probabilites_du_marche(
                 cotes or (collecte or {}).get("cotes")
             ),
+            # P(plus de 2,5 buts) selon les bookmakers : le total attendu y est
+            # recale (`buts.caler`). None sans cote.
+            "totaux_marche": ((collecte or {}).get("totaux_marche") or {}).get("p_plus"),
         },
     }
     # Les cartons recoivent la discipline du match : arbitre, onze, entraineur
@@ -363,9 +366,15 @@ def build(
     # des onze du jour (`modeles/apports.py`). Sans l'un ni l'autre, rien.
     marche_1x2 = apports[BUTS.cle]["marche"]
     styles_du_jour = (collecte or {}).get("styles") or {}
+    p_plus_25 = apports[BUTS.cle]["totaux_marche"]
     for modele in (CORNERS, TIRS_CADRES):
         if marche_1x2 or styles_du_jour.get(modele.cle):
-            apports[modele.cle] = {"marche": marche_1x2,
+            marche_modele = marche_1x2
+            # Les tirs cadres lisent aussi le plus / moins 2,5 buts, quand il
+            # est releve (4e variable de `corriger_par_le_marche`).
+            if marche_1x2 and p_plus_25 is not None and modele is TIRS_CADRES:
+                marche_modele = dict(marche_1x2, plus_25=p_plus_25)
+            apports[modele.cle] = {"marche": marche_modele,
                                    "styles": styles_du_jour.get(modele.cle)}
 
     # --- Seconde phase : chaque modele corrige, puis prevoit ---------------
@@ -432,6 +441,8 @@ def build(
             historique_cotes,
         )
         prediction["contexte"] = contexte
+        if collecte.get("entraineurs"):
+            prediction["entraineurs"] = collecte["entraineurs"]
         prediction["confiance"] = contexte["confiance"]
         prediction["reglage"] = dict(
             prediction["reglage"], poids_contexte=contexte["poids"]

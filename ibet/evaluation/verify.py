@@ -28,7 +28,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ibet import chemins
-from ibet.sources import api_client
+from ibet.sources import api_client, horloge
 from ibet.stockage import store
 
 RECORD = chemins.HISTORIQUE_JSON
@@ -67,7 +67,7 @@ def is_due(record: dict[str, Any], tz_name: str | None = None) -> bool:
         # Coup d'envoi illisible : on examine la fiche plutot que de la laisser
         # en attente pour toujours.
         return True
-    now = datetime.now(ZoneInfo(_tz_name(tz_name)))
+    now = horloge.maintenant(ZoneInfo(_tz_name(tz_name)))
     return (now - started).total_seconds() > MATCH_DURATION_MINUTES * 60
 
 
@@ -83,7 +83,7 @@ def jours_restants(record: dict[str, Any], tz_name: str | None = None) -> float 
         ).replace(tzinfo=ZoneInfo(_tz_name(tz_name)))
     except ValueError:
         return None
-    maintenant = datetime.now(ZoneInfo(_tz_name(tz_name)))
+    maintenant = horloge.maintenant(ZoneInfo(_tz_name(tz_name)))
     return JOURS_FENETRE - (maintenant - debut).total_seconds() / 86400
 
 

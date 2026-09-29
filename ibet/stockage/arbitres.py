@@ -1,30 +1,35 @@
 """Base des arbitres : qui siffle, combien il sanctionne, et sur quel echantillon.
 
-Le critere 12 mesure la discipline de l'arbitre designe, et il reste a poids
-zero pour une raison qui n'a jamais ete son bien-fonde : **le projet n'avait
-aucune source d'arbitres**. Flashscore, qui fournit tout le reste, rend un champ
-`arbitre` vide sur son edition francaise ; api-football le donnerait mais
-demande une cle payante qui n'est pas configuree. Le critere reconstituait donc
-un profil dans les matchs des deux equipes, sur un echantillon petit ET biaise
--- ce sont les matchs de ces equipes-la, pas ceux de l'arbitre.
+Le modele des cartons (`modeles/cartons.py`) lit le profil de l'arbitre designe
+dans les feuilles de match Flashscore (`store.feuilles`). Ces feuilles ne
+remontent pas loin pour la plupart des arbitres : neuf matchs connus en
+mediane, trop peu pour distinguer un arbitre severe d'un arbitre coulant.
 
-Ce module remplace cette reconstitution par une vraie base : les tableaux
-d'arbitres de worldfootball.net, rendus cote serveur, une ligne par arbitre et
-par competition avec son nombre de matchs, ses cartons et ses penalties.
+Ce module apporte l'HISTORIQUE : les tableaux d'arbitres de worldfootball.net,
+une ligne par arbitre, par competition et par SAISON -- matchs, jaunes,
+second jaune, rouges, penalties. Il sert d'a priori au profil tire des
+feuilles (`Discipline.arbitre(..., historique=...)`), qui l'affine ensuite.
 
-**Ce que « style » veut dire ici.** Pas une etiquette (« severe », « permissif »)
-mais des comptages : cartons par match, cartons rouges par match, penalties par
-match, chacun rapporte a la moyenne de la competition ou l'arbitre officie. Un
-adjectif ne se mesure pas et ne se verifie pas ; un rapport de 1.35 carton par
-match contre 0.95 pour la competition, oui -- et c'est exactement la forme que
-le critere 12 attend (`rapport`, centre sur 1).
+**Par saison, et pas en cumul.** Un profil cumule sur deux saisons contient les
+matchs qu'on voudrait prevoir : le mesurer sur eux serait se juger avec la
+reponse sous les yeux. Garder la saison permet de n'employer, pour un match,
+que les saisons qui le PRECEDENT.
 
-**Ce que la base ne dit pas.** Elle donne le profil d'un arbitre, pas sa
-designation : savoir que Siebert donne 5.2 cartons par match ne dit pas qu'il
-arbitrera tel match. La designation reste hors de portee -- elle est publiee
-tardivement, parfois apres coup. La base rend donc le critere 12 MESURABLE le
-jour ou une source de designation existera, et utile des maintenant pour lire un
-match une fois l'arbitre connu.
+**La saison en cours n'y est pas** : la source ne publie ses tableaux qu'une
+fois la saison avancee (404 sur 2026-2027 en septembre 2026). Les arbitres de
+la saison en cours viennent des feuilles de match Flashscore
+(`python -m ibet rattraper-feuilles`), que le modele lit deja.
+
+**Des noms a rapprocher.** La source ecrit « Jesus Gil Manzano / Spain »,
+Flashscore « Manzano J. / Esp » ou « Gil Manzano J. ». `historique_de` retrouve
+le premier a partir du second : nom de famille contenu dans le nom complet,
+meme initiale, pays compatible. Un cas ambigu est ecarte plutot que devine --
+un historique attribue au mauvais arbitre ferait plus de mal que pas
+d'historique du tout.
+
+Usage :
+    python -m ibet arbitres            # releve et enregistre (pages en cache 30 j)
+    python -m ibet arbitres --sans-cache
 """
 
 from __future__ import annotations
@@ -33,62 +38,81 @@ import json
 import re
 import sqlite3
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from ibet import chemins
 from ibet.sources import api_client, cache
 
-DB_PATH = chemins.BASE_ARBITRES
+DB_PATH = chemins.BASE
+
+#: Ancienne base separee, avant que les arbitres ne rejoignent `ibet.db`.
+ANCIENNE_BASE = chemins.DONNEES / "arbitres.db"
 
 WORLDFOOTBALL = "https://www.worldfootball.net/referees/%s/"
 
 #: Trente jours : un tableau d'arbitres bouge d'une journee de championnat a
 #: l'autre, pas d'une heure a l'autre. Le cache evite de redemander la meme page
-#: a chaque construction, et la construction complete en demande une quinzaine.
+#: a chaque construction.
 TABLEAU_TTL = 30 * 24 * 3600
 
 #: Competitions couvertes, par (cle interne, slug de la source, libelle).
 #:
-#: Les coupes d'Europe d'abord : ce sont elles que le projet vise, et un arbitre
-#: qui y officie est par construction parmi les meilleurs de son pays. Les grands
-#: championnats ensuite, parce que la plupart des arbitres UEFA y siffient aussi
-#: -- c'est la que leur echantillon est large, donc leur profil fiable.
-#:
-#: Les slugs ont ete releves un par un : « bundesliga » n'a pas de prefixe de
-#: pays quand « eng-premier-league » en a, et « conference-league » ne s'appelle
-#: pas « uefa-europa-conference-league ». Les deviner rendait 404.
+#: Les slugs ont ete releves un par un -- « bundesliga » n'a pas de prefixe de
+#: pays quand « eng-premier-league » en a -- et verifies contre la source en
+#: septembre 2026. Les championnats absents (Belgique, Bresil, MLS, Scandinavie)
+#: n'ont pas de tableau d'arbitres sur worldfootball.
 COMPETITIONS = (
     ("ldc", "champions-league-%s", "Ligue des Champions"),
     ("europa", "europa-league-%s", "Ligue Europa"),
     ("conference", "conference-league-%s", "Ligue Conference"),
     ("angleterre", "eng-premier-league-%s", "Premier League"),
+    ("angleterre-2", "eng-championship-%s", "Championship"),
+    ("angleterre-3", "eng-league-one-%s", "League One"),
     ("espagne", "esp-primera-division-%s", "LaLiga"),
+    ("espagne-2", "esp-segunda-division-%s", "LaLiga2"),
     ("italie", "ita-serie-a-%s", "Serie A"),
+    ("italie-2", "ita-serie-b-%s", "Serie B"),
     ("allemagne", "bundesliga-%s", "Bundesliga"),
+    ("allemagne-2", "2-bundesliga-%s", "2. Bundesliga"),
     ("france", "fra-ligue-1-%s", "Ligue 1"),
+    ("france-2", "fra-ligue-2-%s", "Ligue 2"),
     ("pays-bas", "ned-eredivisie-%s", "Eredivisie"),
+    ("pays-bas-2", "ned-eerste-divisie-%s", "Eerste Divisie"),
     ("portugal", "por-primeira-liga-%s", "Liga Portugal"),
     ("turquie", "tur-sueperlig-%s", "Super Lig"),
+    ("ecosse", "sco-premiership-%s", "Premiership"),
+    ("autriche", "aut-bundesliga-%s", "Bundesliga (Autriche)"),
+    ("suisse", "sui-super-league-%s", "Super League"),
+    ("grece", "gre-super-league-%s", "Super League (Grece)"),
+    ("danemark", "den-superliga-%s", "Superliga"),
+    ("pologne", "pol-ekstraklasa-%s", "Ekstraklasa"),
+    ("russie", "rus-premier-liga-%s", "Premier Liga"),
 )
 
-#: Saisons demandees. Deux valent mieux qu'une : un arbitre qui n'a siffle que
-#: trois matchs cette saison en a peut-etre vingt-cinq l'an dernier, et c'est
-#: l'echantillon cumule qui rend son profil lisible.
-SAISONS = ("2025-2026", "2024-2025")
+#: Saisons demandees, la plus recente d'abord. Trois saisons donnent a un
+#: arbitre d'elite une cinquantaine de matchs ; au-dela, son style a pu changer.
+SAISONS = ("2025-2026", "2024-2025", "2023-2024")
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS arbitres (
-    id          INTEGER PRIMARY KEY,
-    cle         TEXT NOT NULL UNIQUE,
-    nom         TEXT NOT NULL,
-    pays        TEXT NOT NULL DEFAULT '',
-    releve_le   TEXT NOT NULL,
-    payload     TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS arbitres_saisons (
+    cle            TEXT NOT NULL,
+    nom            TEXT NOT NULL,
+    pays           TEXT NOT NULL DEFAULT '',
+    competition    TEXT NOT NULL,
+    saison         TEXT NOT NULL,
+    matchs         REAL NOT NULL,
+    jaunes         REAL NOT NULL,
+    jaune_rouge    REAL NOT NULL DEFAULT 0,
+    rouges         REAL NOT NULL DEFAULT 0,
+    penalties      REAL NOT NULL DEFAULT 0,
+    jaunes_moyens  REAL,
+    releve_le      TEXT NOT NULL,
+    PRIMARY KEY (cle, competition, saison)
 );
 
-CREATE INDEX IF NOT EXISTS idx_arbitres_nom ON arbitres(nom);
+CREATE INDEX IF NOT EXISTS idx_arbitres_saisons_nom ON arbitres_saisons(nom);
 """
 
 
@@ -99,9 +123,15 @@ def connect() -> sqlite3.Connection:
 
 
 def init() -> None:
-    """Cree la base. Idempotent."""
+    """Cree les tables. Idempotent."""
     with connect() as connexion:
         connexion.executescript(SCHEMA)
+
+
+def _sans_accents(texte: str) -> str:
+    texte = unicodedata.normalize("NFKD", texte or "")
+    texte = "".join(c for c in texte if not unicodedata.combining(c)).lower()
+    return " ".join(re.sub(r"[^a-z ]+", " ", texte).split())
 
 
 def cle_arbitre(nom: str, pays: str = "") -> str:
@@ -114,25 +144,10 @@ def cle_arbitre(nom: str, pays: str = "") -> str:
     Le pays fait partie de la cle : deux arbitres peuvent porter le meme nom, et
     fondre leurs statistiques en donnerait un troisieme qui n'existe pas.
     """
-    texte = unicodedata.normalize("NFKD", nom or "")
-    texte = "".join(c for c in texte if not unicodedata.combining(c)).lower()
-    texte = re.sub(r"[^a-z ]+", " ", texte)
-    return "%s|%s" % (" ".join(texte.split()), (pays or "").strip().lower())
+    return "%s|%s" % (_sans_accents(nom), (pays or "").strip().lower())
 
 
-#: Un tableau entier, pour n'en garder QUE celui des arbitres.
-#:
-#: Une page de la source en porte plusieurs -- le classement du championnat y
-#: figure aussi, et ses lignes ont autant de cellules. Les accepter toutes
-#: faisait entrer « Arsenal FC » dans la base des arbitres, avec « Arsenal »
-#: pour pays et 0.60 carton par match : la moyenne generale tombait a 1.82
-#: carton quand le reel tourne autour de 4, sans qu'aucune erreur ne soit levee.
-#: On identifie donc le bon tableau par ses EN-TETES.
-_TABLEAU = re.compile(r"<table[^>]*>(.*?)</table>", re.S)
-
-#: Marque du tableau des arbitres : cette colonne n'existe nulle part ailleurs.
-_ENTETE_ARBITRES = "Yellow-Red"
-
+#: Une ligne de tableau HTML et ses cellules.
 _LIGNE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
 _CELLULE = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
 _BALISE = re.compile(r"<[^>]+>")
@@ -154,8 +169,8 @@ def lire_tableau(slug: str, use_cache: bool = True) -> list[dict[str, Any]]:
     premiere ligne d'un groupe a egalite -- on ne s'en sert pas.
 
     Rend une liste vide si la page n'existe pas (404 sur une competition sans
-    tableau, ou un slug qui a change). Ne leve pas : construire une base ne doit
-    pas echouer parce qu'une competition sur onze manque.
+    tableau, ou une saison pas encore publiee). Ne leve pas : construire une
+    base ne doit pas echouer parce qu'une page sur soixante-quinze manque.
     """
     marque = "v1|arbitres|%s" % slug
     if use_cache:
@@ -182,9 +197,7 @@ def lire_tableau(slug: str, use_cache: bool = True) -> list[dict[str, Any]]:
     #
     # Une ligne d'arbitre a EXACTEMENT neuf cellules -- rang, drapeau, nom, pays,
     # matchs, jaunes, jaune-rouge, rouges, penalties -- et ses cinq dernieres
-    # sont des nombres. Une ligne de classement en a davantage (victoires, nuls,
-    # defaites, buts, difference, points). C'est le seul critere qui tienne sans
-    # dependre de la structure de la page.
+    # sont des nombres. Une ligne de classement en a davantage.
     lignes: list[dict[str, Any]] = []
     for brut in _LIGNE.findall(reponse.text):
         cellules = [_BALISE.sub("", c).strip() for c in _CELLULE.findall(brut)]
@@ -193,8 +206,6 @@ def lire_tableau(slug: str, use_cache: bool = True) -> list[dict[str, Any]]:
         chiffres = [c.strip() for c in cellules[4:9]]
         if not all(c == "" or c.isdigit() for c in chiffres):
             continue
-        # Le pays ne contient jamais de chiffre ; un nom d'equipe court non plus,
-        # mais la longueur de ligne l'a deja ecarte.
         if any(caractere.isdigit() for caractere in cellules[3]):
             continue
         lignes.append(
@@ -205,7 +216,7 @@ def lire_tableau(slug: str, use_cache: bool = True) -> list[dict[str, Any]]:
                 "jaunes": _nombre(cellules[5]),
                 "jaune_rouge": _nombre(cellules[6]),
                 "rouges": _nombre(cellules[7]),
-                "penalties": _nombre(cellules[8]) if len(cellules) > 8 else 0.0,
+                "penalties": _nombre(cellules[8]),
             }
         )
     if lignes:
@@ -213,217 +224,291 @@ def lire_tableau(slug: str, use_cache: bool = True) -> list[dict[str, Any]]:
     return lignes
 
 
-def _profil_vide(nom: str, pays: str) -> dict[str, Any]:
-    return {
-        "nom": nom,
-        "pays": pays,
-        "matchs": 0.0,
-        "jaunes": 0.0,
-        "jaune_rouge": 0.0,
-        "rouges": 0.0,
-        "penalties": 0.0,
-        "competitions": {},
-    }
-
-
 def construire(
     saisons: Iterable[str] = SAISONS,
     competitions: Iterable[tuple[str, str, str]] = COMPETITIONS,
     use_cache: bool = True,
 ) -> dict[str, Any]:
-    """Agrege toutes les competitions demandees en une base d'arbitres.
+    """Toutes les pages demandees, une ligne par arbitre, competition et saison.
 
-    Un arbitre apparait dans plusieurs tableaux -- sa Ligue des Champions et son
-    championnat national --, et ses lignes sont CUMULEES : c'est l'echantillon
-    total qui rend son profil lisible, et un profil etabli sur trente matchs vaut
-    infiniment mieux que trois profils de dix.
-
-    Le detail par competition est conserve a cote du cumul. Il n'est pas
-    decoratif : un arbitre peut etre severe dans son championnat et mesure en
-    Coupe d'Europe, et le cumul seul le cacherait.
+    Chaque ligne porte la moyenne de jaunes par match de SA competition et de SA
+    saison (`jaunes_moyens`) : un arbitre a 4.5 jaunes par match est severe en
+    Premier League et ordinaire en Serie A, et c'est l'ecart a cette moyenne
+    -- pas le chiffre brut -- qui dit son style.
     """
-    profils: dict[str, dict[str, Any]] = {}
+    lignes: list[dict[str, Any]] = []
     manquantes: list[str] = []
-    lues = 0
-
     for cle_comp, gabarit, libelle in competitions:
         for saison in saisons:
             slug = gabarit % saison
-            lignes = lire_tableau(slug, use_cache)
-            if not lignes:
+            tableau = lire_tableau(slug, use_cache)
+            if not tableau:
                 manquantes.append(slug)
                 continue
-            lues += 1
-            for ligne in lignes:
-                cle = cle_arbitre(ligne["nom"], ligne["pays"])
-                profil = profils.setdefault(
-                    cle, _profil_vide(ligne["nom"], ligne["pays"])
-                )
-                for champ in ("matchs", "jaunes", "jaune_rouge", "rouges", "penalties"):
-                    profil[champ] += ligne[champ]
-                detail = profil["competitions"].setdefault(
-                    cle_comp, {"libelle": libelle, "matchs": 0.0, "jaunes": 0.0,
-                               "rouges": 0.0, "saisons": []}
-                )
-                detail["matchs"] += ligne["matchs"]
-                detail["jaunes"] += ligne["jaunes"]
-                detail["rouges"] += ligne["rouges"] + ligne["jaune_rouge"]
-                if saison not in detail["saisons"]:
-                    detail["saisons"].append(saison)
-
-    for profil in profils.values():
-        profil.update(_indices(profil))
-
+            matchs = sum(l["matchs"] for l in tableau)
+            moyenne = sum(l["jaunes"] for l in tableau) / matchs if matchs else None
+            for l in tableau:
+                lignes.append(dict(
+                    l, cle=cle_arbitre(l["nom"], l["pays"]), competition=cle_comp,
+                    libelle=libelle, saison=saison, jaunes_moyens=moyenne,
+                ))
     return {
-        "arbitres": profils,
-        "tableaux_lus": lues,
+        "lignes": lignes,
+        "tableaux_lus": len({(l["competition"], l["saison"]) for l in lignes}),
         "tableaux_absents": manquantes,
         "releve_le": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
 
-def _indices(profil: dict[str, Any]) -> dict[str, Any]:
-    """Les ratios par match : c'est eux, et non les totaux, qui comparent.
-
-    Un arbitre a 52 cartons n'est pas plus severe qu'un arbitre a 19 s'il a
-    arbitre dix matchs contre trois. Les totaux mesurent une carriere, les
-    ratios un style -- et c'est le style qu'on veut lire.
-
-    Un rouge et un second jaune sont comptes ensemble : les deux sortent un
-    joueur, et la distinction n'interesse pas un parieur.
-    """
-    matchs = profil["matchs"]
-    if matchs <= 0:
-        return {"cartons_par_match": None, "rouges_par_match": None,
-                "penalties_par_match": None}
-    return {
-        "cartons_par_match": round(profil["jaunes"] / matchs, 3),
-        "rouges_par_match": round(
-            (profil["rouges"] + profil["jaune_rouge"]) / matchs, 3
-        ),
-        "penalties_par_match": round(profil["penalties"] / matchs, 3),
-    }
-
-
 def enregistrer(base: dict[str, Any]) -> int:
-    """Ecrit la base. Un arbitre deja connu est REMPLACE par son profil a jour.
-
-    Contrairement a une prevision, un profil d'arbitre n'est pas un engagement
-    pris a une date : c'est un etat courant, et le garder perime n'aurait aucun
-    interet. Le relevé est horodate pour qu'on sache de quand il date.
-    """
+    """Ecrit les lignes. Une ligne deja connue (arbitre, competition, saison)
+    est REMPLACEE : une saison en cours se complete d'une releve a l'autre."""
     init()
-    horodatage = base.get("releve_le") or datetime.now(timezone.utc).isoformat(
-        timespec="seconds"
-    )
     with connect() as connexion:
-        for cle, profil in base["arbitres"].items():
-            connexion.execute(
-                "INSERT INTO arbitres (cle, nom, pays, releve_le, payload)"
-                " VALUES (?, ?, ?, ?, ?)"
-                " ON CONFLICT(cle) DO UPDATE SET"
-                " nom = excluded.nom, pays = excluded.pays,"
-                " releve_le = excluded.releve_le, payload = excluded.payload",
-                (
-                    cle, profil["nom"], profil["pays"], horodatage,
-                    json.dumps(profil, ensure_ascii=False),
-                ),
-            )
-    return len(base["arbitres"])
+        connexion.executemany(
+            "INSERT INTO arbitres_saisons (cle, nom, pays, competition, saison, matchs,"
+            " jaunes, jaune_rouge, rouges, penalties, jaunes_moyens, releve_le)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(cle, competition, saison) DO UPDATE SET"
+            " nom = excluded.nom, pays = excluded.pays, matchs = excluded.matchs,"
+            " jaunes = excluded.jaunes, jaune_rouge = excluded.jaune_rouge,"
+            " rouges = excluded.rouges, penalties = excluded.penalties,"
+            " jaunes_moyens = excluded.jaunes_moyens, releve_le = excluded.releve_le",
+            [
+                (l["cle"], l["nom"], l["pays"], l["competition"], l["saison"],
+                 l["matchs"], l["jaunes"], l["jaune_rouge"], l["rouges"],
+                 l["penalties"], l["jaunes_moyens"], base["releve_le"])
+                for l in base["lignes"]
+            ],
+        )
+    _INDEX.clear()
+    return len(base["lignes"])
+
+
+def lignes(cle: str | None = None) -> list[dict[str, Any]]:
+    """Les lignes par saison, d'un arbitre ou de tous."""
+    init()
+    with connect() as connexion:
+        if cle:
+            rangs = connexion.execute(
+                "SELECT * FROM arbitres_saisons WHERE cle = ?", (cle,)
+            ).fetchall()
+        else:
+            rangs = connexion.execute("SELECT * FROM arbitres_saisons").fetchall()
+    return [dict(r) for r in rangs]
 
 
 def tous(minimum_matchs: float = 0.0) -> list[dict[str, Any]]:
-    """Les arbitres connus, les plus sollicites d'abord.
+    """Profils cumules, toutes saisons, les arbitres les plus sollicites d'abord.
 
-    `minimum_matchs` ecarte ceux dont l'echantillon ne dit rien. Sous une
-    dizaine de matchs, un ratio de cartons tient surtout du hasard des
-    rencontres : trois derbys donnent un arbitre severe qui ne l'est pas.
+    `minimum_matchs` ecarte ceux dont l'echantillon ne dit rien : sous une
+    dizaine de matchs, un ratio de cartons tient surtout du hasard.
     """
-    init()
-    with connect() as connexion:
-        lignes = connexion.execute(
-            "SELECT cle, nom, pays, releve_le, payload FROM arbitres"
-        ).fetchall()
-    profils = []
-    for ligne in lignes:
-        profil = json.loads(ligne["payload"])
-        profil["cle"] = ligne["cle"]
-        profil["releve_le"] = ligne["releve_le"]
-        if profil.get("matchs", 0) >= minimum_matchs:
-            profils.append(profil)
-    profils.sort(key=lambda p: p.get("matchs", 0), reverse=True)
-    return profils
-
-
-def trouver(nom: str, pays: str = "") -> dict[str, Any] | None:
-    """Un arbitre par son nom, accents et casse indifferents.
-
-    Sans pays, on accepte une correspondance sur le seul nom -- c'est le cas
-    courant, une source de designation ne donnant que « M. Oliver ». Le pays,
-    quand il est connu, leve l'ambiguite entre deux homonymes.
-    """
-    init()
-    voulu = cle_arbitre(nom, pays)
-    with connect() as connexion:
-        if pays:
-            ligne = connexion.execute(
-                "SELECT payload FROM arbitres WHERE cle = ?", (voulu,)
-            ).fetchone()
-            return json.loads(ligne["payload"]) if ligne else None
-        prefixe = voulu.split("|")[0]
-        lignes = connexion.execute(
-            "SELECT payload, cle FROM arbitres WHERE cle LIKE ?", (prefixe + "|%",)
-        ).fetchall()
-    # Plusieurs homonymes de pays differents : on ne choisit pas a la place de
-    # l'appelant, on rend le plus experimente et il pourra preciser le pays.
-    profils = [json.loads(l["payload"]) for l in lignes]
-    profils.sort(key=lambda p: p.get("matchs", 0), reverse=True)
-    return profils[0] if profils else None
-
-
-def reperes() -> dict[str, Any]:
-    """Moyennes de l'ensemble : de quoi dire si un arbitre s'en ecarte.
-
-    Un ratio seul ne se lit pas. 4.5 cartons par match est severe en Premier
-    League et ordinaire en Serie A ; c'est l'ECART a la moyenne qui informe, et
-    c'est cette forme-la -- un rapport centre sur 1 -- que le critere 12 attend.
-    """
-    profils = [p for p in tous() if (p.get("matchs") or 0) > 0]
-    if not profils:
-        return {}
-    total_matchs = sum(p["matchs"] for p in profils)
-    return {
-        "arbitres": len(profils),
-        "matchs_cumules": total_matchs,
-        "cartons_par_match": round(
-            sum(p["jaunes"] for p in profils) / total_matchs, 3
-        ),
-        "rouges_par_match": round(
-            sum(p["rouges"] + p["jaune_rouge"] for p in profils) / total_matchs, 3
-        ),
-        "penalties_par_match": round(
-            sum(p["penalties"] for p in profils) / total_matchs, 3
-        ),
-    }
-
-
-def rapport_au_repere(profil: dict[str, Any]) -> dict[str, Any]:
-    """Les ratios d'un arbitre rapportes a la moyenne, centres sur 1.
-
-    C'est la forme que le critere 12 emploie deja : un arbitre moyen vaut 1, un
-    arbitre severe 1.2. Rendre ce rapport plutot que le ratio brut evite a
-    l'appelant de refaire la normalisation -- et de la refaire autrement.
-    """
-    base = reperes()
-    if not base or not profil.get("matchs"):
-        return {}
-    rendu = {}
-    for champ in ("cartons_par_match", "rouges_par_match", "penalties_par_match"):
-        moyenne = base.get(champ) or 0
-        valeur = profil.get(champ)
-        if moyenne and valeur is not None:
-            rendu[champ] = round(valeur / moyenne, 3)
+    profils: dict[str, dict[str, Any]] = {}
+    for l in lignes():
+        p = profils.setdefault(l["cle"], {
+            "cle": l["cle"], "nom": l["nom"], "pays": l["pays"], "matchs": 0.0,
+            "jaunes": 0.0, "jaune_rouge": 0.0, "rouges": 0.0, "penalties": 0.0,
+            "attendus": 0.0, "saisons": set(), "competitions": set(),
+        })
+        for champ in ("matchs", "jaunes", "jaune_rouge", "rouges", "penalties"):
+            p[champ] += l[champ]
+        p["attendus"] += l["matchs"] * (l["jaunes_moyens"] or 0.0)
+        p["saisons"].add(l["saison"])
+        p["competitions"].add(l["competition"])
+    rendu = []
+    for p in profils.values():
+        if p["matchs"] < minimum_matchs or p["matchs"] <= 0:
+            continue
+        p["saisons"] = sorted(p["saisons"], reverse=True)
+        p["competitions"] = sorted(p["competitions"])
+        p["jaunes_par_match"] = round(p["jaunes"] / p["matchs"], 3)
+        # Jaunes donnes / jaunes qu'aurait donnes un arbitre moyen de ses
+        # competitions : 1.2 = 20 % de plus que la moyenne.
+        p["rapport"] = round(p["jaunes"] / p["attendus"], 3) if p["attendus"] else None
+        p["penalties_par_match"] = round(p["penalties"] / p["matchs"], 3)
+        p["rouges_par_match"] = round((p["rouges"] + p["jaune_rouge"]) / p["matchs"], 3)
+        rendu.append(p)
+    rendu.sort(key=lambda p: p["matchs"], reverse=True)
     return rendu
+
+
+# ---------------------------------------------------------------------------
+# Rapprochement avec les noms Flashscore
+# ---------------------------------------------------------------------------
+
+#: Pays de la source -> code pays des feuilles Flashscore.
+#:
+#: Le pays doit CONCORDER des que la feuille en donne un. Sans cette regle, un
+#: « Pinheiro J. » bresilien heritait du profil du Portugais Joao Pinheiro, un
+#: « Ortiz M. » mexicain de celui de l'Espagnol Miguel Ortiz Arias : la source
+#: ne couvre que des arbitres europeens, et un code hors de cette table (Bra,
+#: Mex, Chi...) designe donc un autre homme. Les codes marques d'un asterisque
+#: dans le commentaire n'ont pas encore ete vus dans les feuilles : ce sont ceux
+#: de la FIFA, a corriger si Flashscore en emploie d'autres.
+CODES_PAYS = {
+    "albania": "alb",  # *
+    "armenia": "arm",  # *
+    "australia": "aus", "austria": "aut", "azerbaijan": "aze", "belgium": "bel",
+    "bosnia herzegovina": "bih", "bulgaria": "bul", "croatia": "cro",
+    "cyprus": "cyp",  # *
+    "czech republic": "cze",
+    "denmark": "den", "estonia": "est", "finland": "fin", "georgia": "geo",  # *
+    "england": "eng", "france": "fra", "germany": "ger", "greece": "gre",
+    "hungary": "hun",
+    "iceland": "isl", "israel": "isr", "kosovo": "kos",  # *
+    "ireland": "irl", "italy": "ita", "kazakhstan": "kaz", "latvia": "lat",
+    "lithuania": "ltu", "malta": "mlt", "montenegro": "mne", "netherlands": "ned",
+    "north macedonia": "mkd", "northern ireland": "nir",  # *
+    "norway": "nor", "poland": "pol", "portugal": "por", "romania": "rou",
+    "russia": "rus", "scotland": "sco", "serbia": "srb", "slovakia": "svk",
+    "slovenia": "slo", "spain": "esp", "sweden": "swe", "switzerland": "sui",
+    "turkey": "tur", "usa": "usa", "ukraine": "ukr", "wales": "wal",
+}
+
+#: Titres qui precedent parfois le prenom dans la source (« Dr. Matthias
+#: Jollenbeck ») et qu'il ne faut pas prendre pour une initiale.
+_TITRES = {"dr", "prof"}
+
+
+def _decouper_flashscore(nom: str) -> tuple[tuple[str, ...], str]:
+    """« Gonzalez Esteban J. A. » -> (("gonzalez", "esteban"), "j")."""
+    mots = (nom or "").replace(".", " ").split()
+    nom_famille = [m for m in mots if len(m) > 1]
+    initiales = [m for m in mots if len(m) == 1]
+    return tuple(_sans_accents(" ".join(nom_famille)).split()), (
+        _sans_accents(initiales[0]) if initiales else ""
+    )
+
+
+class _Index:
+    """Lignes par arbitre, et les cles qui permettent de les retrouver."""
+
+    def __init__(self) -> None:
+        self.par_cle: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self.pays: dict[str, str] = {}
+        # (initiale, suite de mots du nom de famille) -> cles candidates
+        self.acces: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(set)
+        self.premier_nom: dict[str, str] = {}
+        for l in lignes():
+            self.par_cle[l["cle"]].append(l)
+            if l["cle"] in self.pays:
+                continue
+            self.pays[l["cle"]] = CODES_PAYS.get(_sans_accents(l["pays"]), "")
+            mots = [m for m in _sans_accents(l["nom"]).split() if m not in _TITRES]
+            if len(mots) < 2:
+                continue
+            initiale = mots[0][0]
+            # Toute suite contigue de mots APRES le premier prenom : Flashscore
+            # garde tantot le nom complet (« Gil Manzano »), tantot le dernier
+            # (« Manzano »), tantot le premier (« Munuera » pour Munuera Montero).
+            reste = mots[1:]
+            for debut in range(len(reste)):
+                for fin in range(debut + 1, len(reste) + 1):
+                    self.acces[(initiale, tuple(reste[debut:fin]))].add(l["cle"])
+            # Le PREMIER nom de famille, a part : c'est celui que Flashscore
+            # garde quand il n'en garde qu'un (« Munuera J. » pour Jose Munuera
+            # Montero), ce qui departage deux arbitres qui partagent un nom
+            # (Juan Martinez Munuera).
+            self.premier_nom[l["cle"]] = reste[0]
+
+    def retrouver(self, nom: str, pays: str = "") -> str | None:
+        nom_famille, initiale = _decouper_flashscore(nom)
+        if not nom_famille or not initiale:
+            return None
+        candidats = self.acces.get((initiale, nom_famille), set())
+        code = (pays or "").strip().lower()
+        if code:
+            candidats = {c for c in candidats if self.pays.get(c) == code}
+        if len(candidats) > 1:
+            candidats = {c for c in candidats if self.premier_nom.get(c) == nom_famille[0]}
+        return next(iter(candidats)) if len(candidats) == 1 else None
+
+
+_INDEX: dict[str, _Index] = {}
+
+
+def _index() -> _Index:
+    if "index" not in _INDEX:
+        _INDEX["index"] = _Index()
+    return _INDEX["index"]
+
+
+def historique_de(nom: str, pays: str = "") -> list[dict[str, Any]]:
+    """Lignes par saison de l'arbitre Flashscore `nom` / `pays`, ou [].
+
+    Chaque ligne : saison, competition, matchs, jaunes, `attendus` (jaunes
+    qu'aurait donnes un arbitre moyen de cette competition et de cette saison).
+    Une liste vide quand l'arbitre n'est pas retrouve, ou pas sans ambiguite.
+    """
+    try:
+        index = _index()
+    except sqlite3.Error:
+        return []
+    cle = index.retrouver(nom, pays)
+    if not cle:
+        return []
+    return [
+        {"saison": l["saison"], "competition": l["competition"], "matchs": l["matchs"],
+         "jaunes": l["jaunes"], "attendus": l["matchs"] * (l["jaunes_moyens"] or 0.0),
+         "source": "worldfootball", "nom_source": l["nom"]}
+        for l in index.par_cle[cle] if l["jaunes_moyens"]
+    ]
+
+
+def migrer_ancienne_base() -> int:
+    """Reprend les observations de fautes de l'ancienne `arbitres.db`.
+
+    Les profils cumules de l'ancienne base ne sont pas repris : ils sont
+    reconstruits par saison depuis les pages en cache. Rend le nombre
+    d'observations reprises ; 0 si l'ancienne base n'existe plus.
+    """
+    if not ANCIENNE_BASE.exists():
+        return 0
+    init_matchs()
+    ancienne = sqlite3.connect(ANCIENNE_BASE)
+    try:
+        rangs = ancienne.execute("SELECT * FROM matchs_arbitres").fetchall()
+    except sqlite3.Error:
+        rangs = []
+    finally:
+        ancienne.close()
+    with connect() as connexion:
+        connexion.executemany(
+            "INSERT OR IGNORE INTO matchs_arbitres (match_id, cle, arbitre, competition,"
+            " joue_le, fautes, jaunes, rouges, releve_le) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rangs,
+        )
+    return len(rangs)
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m ibet arbitres",
+        description="Releve les tableaux d'arbitres de worldfootball.net (%d competitions,"
+        " saisons %s) et les enregistre dans donnees/ibet.db."
+        % (len(COMPETITIONS), ", ".join(SAISONS)),
+    )
+    parser.add_argument("--sans-cache", action="store_true",
+                        help="Redemande les pages meme si elles sont en cache (30 jours)")
+    args = parser.parse_args(argv)
+
+    base = construire(use_cache=not args.sans_cache)
+    n = enregistrer(base)
+    reprises = migrer_ancienne_base()
+    profils = tous()
+    print("%d lignes (arbitre x competition x saison) depuis %d pages ; %d absentes"
+          % (n, base["tableaux_lus"], len(base["tableaux_absents"])))
+    for slug in base["tableaux_absents"]:
+        print("  absente : %s" % slug)
+    print("%d arbitres, dont %d vus au moins 20 fois"
+          % (len(profils), sum(p["matchs"] >= 20 for p in profils)))
+    if reprises:
+        print("%d observations de fautes reprises de l'ancienne arbitres.db" % reprises)
+    return 0
+
 
 # ---------------------------------------------------------------------------
 # Enrichissement incremental : les fautes, match par match
@@ -680,3 +765,7 @@ def accumuler_depuis_la_base(
         }
     )
     return resultat
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

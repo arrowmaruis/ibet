@@ -4,7 +4,88 @@ Fichier : `ibet/modeles/cartons.py`. Clé : `cartons_jaunes`.
 
 ---
 
-## 2.0.0 — en service depuis le 2026-09-27
+## 3.0.0 — en service depuis le 2026-09-27
+
+**Changement** : le profil de l'arbitre désigné ne part plus d'un a priori
+neutre (« arbitre moyen ») mais de son **historique** sur worldfootball.net :
+jaunes donnés, rapportés à la moyenne de chaque compétition, sur les saisons
+**antérieures** à celle du match. Les feuilles de match affinent ensuite, comme
+en 2.0.0. Nouvelle source de données, donc version majeure.
+**Pourquoi** : en 2.0.0, les feuilles ne connaissent en médiane que 9 matchs
+par arbitre — trop peu pour distinguer un arbitre sévère d'un coulant. La base
+worldfootball, relevée par une session précédente puis laissée sans usage, en
+connaît le double.
+**Mesure avant adoption** : `python -m ibet mesurer-cartons arbitre=0.5
+variance_arbitre=1 joueurs=0 entraineur=0`, variantes « historique », comparées
+match par match à la 2.0.0. Réglage par défaut **fixé avant la mesure** (lissage
+20, poids 0, puissance 0,5) :
+
+| Matchs rejoués | Gain par match vs 2.0.0 | t |
+|---|---|---|
+| 60 % anciens (1 573) | **+0,0141** | +4,5 |
+| 40 % récents (1 049) | +0,0018 | +0,5 |
+| saison 2025-26, arbitre dans l'historique (1 035) | **+0,0228** | +4,3 |
+| saison 2026-27, arbitre dans l'historique (311) | +0,0015 | +0,2 |
+
+Le réglage le mieux classé sur les anciens matchs (lissage 10, poids 0,5,
+puissance 1 : +0,0196) **perdait** sur les récents (−0,0080, t = −0,8) : il
+apprenait les anciens matchs plutôt que les arbitres. Il n'est pas retenu.
+
+### Ce que fait la version
+- **Données** : `python -m ibet arbitres` relève les tableaux d'arbitres de
+  worldfootball.net — 25 compétitions (coupes d'Europe, deux ou trois divisions
+  d'Angleterre, d'Espagne, d'Italie, d'Allemagne, de France, des Pays-Bas ;
+  Portugal, Turquie, Écosse, Autriche, Suisse, Grèce, Danemark, Pologne,
+  Russie), saisons 2023-24 à 2025-26. Une ligne par arbitre, compétition et
+  **saison**, dans la table `arbitres_saisons` de `ibet.db` : 2 242 lignes,
+  678 arbitres, dont 368 vus au moins 20 fois. La source ne publie pas encore
+  la saison 2026-27 (404) : les arbitres de la saison en cours viennent des
+  feuilles de match Flashscore.
+- **Rapprochement des noms** (`arbitres.historique_de`) : « Manzano J. / Esp »
+  → « Jesús Gil Manzano / Spain ». Nom de famille contenu dans le nom complet,
+  même initiale, **même pays** (un « Pinheiro J. » brésilien n'hérite pas du
+  Portugais João Pinheiro) ; entre deux homonymes, le premier nom de famille
+  départage (« Munuera J. » = José Munuera Montero, pas Juan Martínez
+  Munuera) ; un cas encore ambigu est écarté. 305 arbitres des feuilles
+  retrouvés, 61 % des matchs archivés ; aucun arbitre source attribué à deux
+  noms Flashscore.
+- **A priori** (`Discipline.arbitre`) : rapport historique
+  `(jaunes + 20) / (attendus + 20)`, `attendus` = matchs × moyenne de jaunes de
+  la compétition et de la saison. Il remplace le 1 de la 2.0.0 comme centre de
+  l'a priori ; son poids reste `lissage_arbitre` = 40 cartons attendus. La
+  saison du match est exclue, même en partie.
+- **Sans historique** (arbitre non retrouvé, compétition non couverte),
+  le calcul est exactement celui de la 2.0.0.
+- La fiche porte la trace : `apports.arbitre.historique` = matchs connus et
+  rapport de départ.
+
+### Points forts
+- Gain net quand les feuilles connaissent mal l'arbitre : +0,023 par match
+  (t = 4,3) sur la saison 2025-26.
+- Jamais de perte mesurée avec le réglage retenu.
+- Couvre des arbitres absents des feuilles (Championship, Serie B,
+  2. Bundesliga…).
+
+### Points faibles
+- **Sur la saison en cours, aucun gain mesurable** (+0,0015, t = 0,2, 311
+  matchs) : les feuilles y connaissent déjà ces arbitres par la saison
+  2025-26, que l'historique couvre aussi.
+- 39 % des matchs archivés restent sans historique : arbitres hors d'Europe,
+  noms trop différents (« Madley R. » vs « Bobby Madley »), pays à code inconnu.
+- 11 pages absentes chez la source (Conference League 2023-24 ; Suisse, Grèce,
+  Danemark, Pologne, Russie avant 2025-26).
+
+### Pistes pour la suite
+- Re-mesurer sur la saison 2026-27 quand elle comptera un millier de matchs.
+- Relever la saison 2026-27 dès que la source la publie (`python -m ibet arbitres`).
+- Pénalties par arbitre (dans la base, inexploités) pour le modèle des buts.
+
+### Mesures en service
+Pas encore de fiche tranchée en 3.0.0.
+
+---
+
+## 2.0.0 — retirée le 2026-09-27
 
 **Changement** : le modèle reçoit la **discipline du match** — l'arbitre désigné,
 l'onze aligné, l'entraîneur — tirée d'une nouvelle source : les feuilles de

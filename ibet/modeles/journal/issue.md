@@ -14,7 +14,20 @@ versions avec `python -m ibet etude --modele issue` et `--modele buts`.
 
 ---
 
-## 1.1.0 — en service depuis le 2026-09-27
+## 1.2.0 — en service depuis le 2026-09-28
+
+**Changement** : aucun changement de code. Les buts 2.1.0 recalent le total
+attendu sur la cote plus / moins 2,5 quand elle est relevée ; la matrice des
+scores change, donc le nul, « les deux marquent » et les scores exacts aussi.
+Le 1X2 publié reste le mélange 10 % modèle / 90 % bookmaker quand les cotes 1X2
+existent.
+
+### Mesures en service
+Pas encore de fiche tranchée en 1.2.0.
+
+---
+
+## 1.1.0 — retirée le 2026-09-28
 
 **Changement** : aucun changement de code. Le modèle reçoit les nombres de buts
 attendus de la version **2.0.0 des buts** (notes au maximum de vraisemblance,

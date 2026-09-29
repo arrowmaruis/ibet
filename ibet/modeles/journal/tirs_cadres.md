@@ -4,7 +4,38 @@ Fichier : `ibet/modeles/tirs_cadres.py`. Clé : `tirs_cadres`.
 
 ---
 
-## 2.0.0 — en service depuis le 2026-09-27
+## 2.1.0 — en service depuis le 2026-09-28
+
+**Changement** : quand la cote plus / moins 2,5 buts est relevée avant le match
+(voir buts 2.1.0), la correction du marché passe au **jeu complet** de
+coefficients : 4e variable p(+2,5) − 0,5 (`COEFS_MARCHE_TOTAL`). Sans cette
+cote, repli sur le jeu 1X2 seul de la 2.0.0.
+**Pourquoi** : c'est la piste notée en 2.0.0 ; un match que le marché voit
+ouvert produit plus de tirs cadrés des deux côtés.
+**Mesure avant adoption** : même mesure que la 2.0.0 (`mesure_historique.py`,
+7 406 matchs de test) : log-vraisemblance +0.0999 avec la cote 2,5, contre
++0.0827 pour le 1X2 seul.
+
+### Ce que fait la version
+- Domicile (0.4546, 0.6421, 0.4787, +0.6146) ; extérieur (0.4248, 0.7180,
+  0.4997, +0.4599), sur (constante, log λ, écart p_dom − p_ext, p(+2,5) − 0,5).
+
+### Points faibles
+- **Source de la cote différente de celle du réglage.** Les coefficients ont
+  été ajustés avec la cote MOYENNE d'OUVERTURE de football-data.co.uk (Avg>2.5,
+  marge retirée par normalisation de la paire moyenne). En service, p(+2,5)
+  vient du consensus the-odds-api : marge retirée opérateur par opérateur, puis
+  moyenne, relevée à l'émission (plus proche de la clôture que de
+  l'ouverture). L'écart attendu est faible, mais la version n'est pas mesurée
+  sur sa propre source : à vérifier sur les fiches 2.1.0.
+- Trace `apports.marche.p_plus_25` dans la fiche quand le jeu complet a servi.
+
+### Mesures en service
+Pas encore de fiche tranchée en 2.1.0.
+
+---
+
+## 2.0.0 — retirée le 2026-09-28
 
 **Changement** : même correction que les corners 3.0.0 : les **cotes 1X2 du
 marché** corrigent le nombre attendu de chaque équipe (`ibet/modeles/apports.py`),

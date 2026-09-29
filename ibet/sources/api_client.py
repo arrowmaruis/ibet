@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
 from dotenv import load_dotenv
 
-from ibet.sources import cache
+from ibet.sources import cache, horloge
 
 # Ce module lit CA_BUNDLE, CACHE_TTL et les cles d'API dans l'environnement :
 # il charge donc .env lui-meme, sans dependre de son appelant. Sans cela, tout
@@ -701,7 +701,7 @@ def _fs_tournament(block: dict[str, str]) -> tuple[str, str]:
 
 
 def _fs_day_offset(date: str, tz_name: str) -> int:
-    today = datetime.now(_tz(tz_name)).date()
+    today = horloge.maintenant(_tz(tz_name)).date()
     target = datetime.strptime(date, "%Y-%m-%d").date()
     offset = (target - today).days
     if abs(offset) > FS_MAX_OFFSET:
@@ -726,7 +726,7 @@ def _fs_utc_offset_hours(tz_name: str) -> int:
     demi-heure sont arrondis : le flux deborde d'environ une heure de chaque
     cote de la journee, et le filtrage par date locale plus bas rattrape l'ecart.
     """
-    offset = datetime.now(_tz(tz_name)).utcoffset()
+    offset = horloge.maintenant(_tz(tz_name)).utcoffset()
     return round(offset.total_seconds() / 3600) if offset else 0
 
 
@@ -2555,7 +2555,7 @@ def weather(town: str, kickoff_utc: str, use_cache: bool = True) -> dict[str, An
         return {}
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    horizon = abs((moment - datetime.now(timezone.utc)).days)
+    horizon = abs((moment - horloge.maintenant(timezone.utc)).days)
     if horizon > WEATHER_HORIZON_DAYS:
         return {}
 
@@ -3295,9 +3295,26 @@ def _meilleures_cotes(bookmakers: list[dict[str, Any]]) -> dict[str, Any]:
     """
     issues: dict[str, tuple[float, str]] = {}
     totaux: dict[tuple[str, float], tuple[float, str]] = {}
+    # Probabilite de « plus » par ligne, un releve par operateur : la
+    # meilleure cote sert a parier, le CONSENSUS a estimer. Le maximum de
+    # chaque cote, pris chez des operateurs differents, efface la marge et
+    # au-dela : il ne dit pas ce que le marche pense.
+    consensus: dict[float, list[float]] = {}
     for bookmaker in bookmakers:
         titre = bookmaker.get("title") or bookmaker.get("key") or ""
         for marche in bookmaker.get("markets") or []:
+            if marche.get("key") == "totals":
+                paires: dict[float, dict[str, float]] = {}
+                for issue in marche.get("outcomes") or []:
+                    if issue.get("point") is not None and issue.get("price"):
+                        paires.setdefault(float(issue["point"]), {})[
+                            (issue.get("name") or "").lower()] = float(issue["price"])
+                for ligne, cotes in paires.items():
+                    plus, moins = cotes.get("over"), cotes.get("under")
+                    if plus and moins and plus > 1.0 and moins > 1.0:
+                        consensus.setdefault(ligne, []).append(
+                            (1 / plus) / (1 / plus + 1 / moins)
+                        )
             for issue in marche.get("outcomes") or []:
                 prix = issue.get("price")
                 if not prix or float(prix) <= 1.0:
@@ -3322,7 +3339,51 @@ def _meilleures_cotes(bookmakers: list[dict[str, Any]]) -> dict[str, Any]:
             "%s|%g" % (sens, ligne): op
             for (sens, ligne), (_, op) in totaux.items()
         },
+        # {ligne: [probabilite de « plus », nombre d'operateurs]}.
+        "totaux_consensus": {
+            "%g" % ligne: [round(sum(ps) / len(ps), 4), len(ps)]
+            for ligne, ps in consensus.items()
+        },
     }
+
+
+def probabilite_plus_de_buts(
+    match: dict[str, Any], ligne: float = 2.5, use_cache: bool = True
+) -> dict[str, Any] | None:
+    """P(plus de `ligne` buts) selon les bookmakers, pour un match A VENIR.
+
+    Consensus de l'agregateur (moyenne des operateurs, marge de chacun
+    retiree). Rend None sans cle, hors couverture, match introuvable, ou match
+    deja commence -- l'agregateur ne publie que les matchs a venir, et une
+    requete sur un match passe couterait du quota pour rien.
+
+    Le rapprochement se fait par les NOMS des deux equipes, comme pour
+    `--valeur` : si l'une ne se reconnait pas, le match est ecarte.
+    """
+    if match.get("statut") not in (None, "", "A venir"):
+        return None
+    sport_key = cle_agregateur(match.get("championnat", ""), match.get("pays", ""))
+    date = (match.get("kickoff_utc") or match.get("date") or "")[:10]
+    if not sport_key or not date or not _cle_odds_api():
+        return None
+    for evenement in aggregated_odds(sport_key, date, use_cache):
+        if not (memes_equipes(evenement.get("domicile", ""), match.get("domicile", ""))
+                and memes_equipes(evenement.get("exterieur", ""), match.get("exterieur", ""))):
+            continue
+        cotes = evenement.get("cotes") or {}
+        releve = (cotes.get("totaux_consensus") or {}).get("%g" % ligne)
+        if releve:
+            return {"ligne": ligne, "p_plus": float(releve[0]), "operateurs": int(releve[1]),
+                    "source": "the-odds-api.com (consensus)"}
+        # Releve mis en cache avant le calcul du consensus : repli sur les
+        # meilleures cotes, marge retiree entre les deux.
+        plus = (cotes.get("totaux") or {}).get("Over|%g" % ligne)
+        moins = (cotes.get("totaux") or {}).get("Under|%g" % ligne)
+        if plus and moins:
+            return {"ligne": ligne, "p_plus": round((1 / plus) / (1 / plus + 1 / moins), 4),
+                    "operateurs": 0, "source": "the-odds-api.com (meilleures cotes)"}
+        return None
+    return None
 
 
 def validate_date(date: str) -> None:

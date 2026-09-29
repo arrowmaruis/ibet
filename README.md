@@ -1492,7 +1492,7 @@ iBET/
 │   │   └── certificats.py      #   bundle de certificats (antivirus / proxy HTTPS)
 │   ├── stockage/               # où elles sont gardées
 │   │   ├── store.py            #   base SQLite des prévisions (donnees/ibet.db)
-│   │   └── arbitres.py         #   base des arbitres (donnees/arbitres.db)
+│   │   └── arbitres.py         #   historique des arbitres par saison (worldfootball.net)
 │   ├── collecte/               # ce qui remplit le stockage après coup
 │   │   ├── resultats.py        #   résultats sortis de la fenêtre de la source
 │   │   ├── feuilles.py         #   feuilles de match (arbitres, cartons, minutes)
@@ -1523,7 +1523,7 @@ iBET/
 │       └── catalogue.py        #   styles de jeu par équipe
 ├── tests/test_stats.py         # tests (sans réseau) : python -m ibet tests
 ├── donnees/                    # données locales, hors git (voir ibet/chemins.py)
-│   ├── ibet.db, arbitres.db, forces.json, predictions_ouvertes.json
+│   ├── ibet.db, entraineurs.db, forces.json, predictions_ouvertes.json
 │   └── cache/, exports/, sauvegardes/, certificats/
 ├── docs/
 │   ├── donnees.md              # système d'information : stockage, risques, migrations
@@ -1553,6 +1553,7 @@ Toutes passent par `python -m ibet`, lancé depuis la racine du projet
 | `python -m ibet etude` | compare les versions des modèles |
 | `python -m ibet forces` | reconstruit les notes attaque / défense |
 | `python -m ibet rattraper` / `rattraper-feuilles` / `rattraper-joueurs` | collecte après coup |
+| `python -m ibet arbitres` | historique des arbitres (25 compétitions, par saison) pour le modèle des cartons |
 | `python -m ibet catalogue` | styles de jeu des joueurs |
 | `python -m ibet mesurer-cartons` / `mesurer-styles` | mesures des apports |
 | `python -m ibet base` | crée les tables, importe l'historique |

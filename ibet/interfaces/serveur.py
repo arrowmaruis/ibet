@@ -33,6 +33,7 @@ Internet (voir les CGU de Flashscore rappelees dans le README).
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -42,8 +43,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ibet import chemins
 from ibet.evaluation import criteres, verify
+from ibet.modeles import offres
 from ibet.prevision import context, forecast, marche
-from ibet.sources import api_client
+from ibet.sources import api_client, horloge
 from ibet.stockage import store
 
 load_dotenv()
@@ -74,9 +76,36 @@ app.add_middleware(
 )
 
 
+# Verification automatique : toutes les dix minutes, le serveur tranche les
+# fiches dont le match est termine. Sans elle, le bilan ne bougeait que si
+# quelqu'un cliquait « Verifier », et restait faux entre-temps. N'interroge la
+# source que s'il y a des fiches mures.
+VERIFICATION_AUTO_MINUTES = 10
+
+
+def _verifier_en_continu() -> None:
+    import time
+
+    while True:
+        try:
+            _, tz_name = api_client.resolve_settings("flashscore", None)
+            if verify.due_count(tz_name):
+                verify.verify_store(tz_name)
+        except Exception as exc:  # noqa: BLE001 - un echec ne doit pas arreter la boucle
+            print("Verification automatique : %s" % exc, flush=True)
+        time.sleep(VERIFICATION_AUTO_MINUTES * 60)
+
+
+@app.on_event("startup")
+def _demarrer_verification_auto() -> None:
+    import threading
+
+    threading.Thread(target=_verifier_en_continu, name="verification-auto", daemon=True).start()
+
+
 def _today(tz_name: str) -> str:
     """Date du jour dans le fuseau d'affichage, pas celui de la machine."""
-    return datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+    return horloge.maintenant(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
 
 
 def _fail(exc: api_client.ApiError) -> HTTPException:
@@ -170,6 +199,9 @@ def list_predictions(
         # s'il vaut la peine d'aller voir.
         "a_verifier": verify.due_count(tz_name),
         "predictions": predictions,
+        # L'ordinateur peut ne plus etre a l'heure (13 h 32 de retard le
+        # 28/09/2026) : le serveur se corrige, l'ecran le signale.
+        "horloge": horloge.etat(),
     }
 
 
@@ -450,6 +482,11 @@ def bet_composer(
         default="",
         description="Portees voulues : total, equipe, issue. Vide = toutes.",
     ),
+    cote_min: float = Query(
+        default=offres.COTE_MIN, ge=1.01, le=5.0,
+        description="Cote minimale de chaque option, chez trois bookmakers au "
+                    "moins. Plus haute = options moins probables, mieux payees.",
+    ),
     avec_cotes: bool = Query(
         default=False,
         description="Classer sur l'esperance (p x cote - 1) plutot que sur la "
@@ -499,9 +536,11 @@ def bet_composer(
         # classements donnerait un conseil qu'aucune des deux lectures ne
         # justifie.
         lignes = []
+        ecartees: dict[str, int] = {}
         for fiche in fiches:
             conseils = marche.conseils_du_modele(
-                fiche, listes, etendues, combien=options
+                fiche, listes, etendues, combien=options, ecartees=ecartees,
+                cote_min=cote_min,
             )
             if conseils:
                 lignes.append(
@@ -523,12 +562,17 @@ def bet_composer(
             "matchs": lignes,
             "combine_simple": {"selections": len(lignes)},
             "note_correlation": (
-                "Classement sur la CONFIANCE du modele, sans cote. Ce n'est pas "
-                "un conseil de pari : une proposition a 90 % est une excellente "
-                "prevision et presque toujours un mauvais pari, parce qu'un "
-                "operateur la cote autour de 1,10 quand il en faudrait 1,11 "
-                "pour ne rien perdre."
+                "Classement sur la CONFIANCE du modele, sans cote relevee. Seules "
+                "les options que l'on trouve chez les bookmakers sont proposees : "
+                "ligne proche de la ligne principale, et cote d'au moins %.2f "
+                "chez trois bookmakers de reference. Les cotes affichees sont "
+                "ESTIMEES d'apres la marge de chaque bookmaker : verifiez-les "
+                "avant de jouer." % max(offres.COTE_MIN, cote_min)
             ),
+            # Ce que le filtre des bookmakers a ecarte, par raison : les options
+            # trop sures (cote sous le minimum) et les lignes non ouvertes.
+            "options_ecartees": ecartees,
+            "cote_min": max(offres.COTE_MIN, cote_min),
             "demandes": sorted(voulus),
             "fiches_examinees": len(fiches),
             "types_disponibles": marche.TYPES_CONSEIL,
@@ -685,12 +729,54 @@ def check_predictions(tz: str | None = Query(default=None)) -> dict[str, Any]:
     }
 
 
+def _servir_avec_rechargement(port: int) -> int:
+    """Sert l'API et la relance a chaque modification du code (`ibet/*.py`).
+
+    Le rechargement integre d'uvicorn ne fonctionne pas ici sous Windows : il
+    arrete l'ancien processus en lui envoyant un Ctrl+C, qui n'arrive que si le
+    serveur tourne dans une fenetre de console. Lance en arriere-plan -- par une
+    session, une tache, un raccourci --, le signal se perd, uvicorn attend
+    indefiniment l'arret de l'ancien processus et le nouveau code ne demarre
+    jamais : le front a servi le code de 13 h tout l'apres-midi du 27/09/2026.
+
+    On surveille donc le code soi-meme, et on arrete l'ancien serveur par le
+    systeme (`terminate`), ce qui ne depend d'aucune console.
+    """
+    import subprocess
+    import sys
+
+    import watchfiles
+
+    commande = [
+        sys.executable, "-m", "uvicorn", "ibet.interfaces.serveur:app",
+        "--host", "127.0.0.1", "--port", str(port),
+    ]
+    code = chemins.RACINE / "ibet"
+    print("Surveillance du code : %s (Ctrl+C pour arreter)" % code, flush=True)
+    while True:
+        serveur = subprocess.Popen(commande, cwd=chemins.RACINE)
+        try:
+            for changements in watchfiles.watch(
+                code, watch_filter=watchfiles.PythonFilter()
+            ):
+                fichiers = sorted({Path(chemin).name for _, chemin in changements})
+                print("Code modifie (%s) : redemarrage du serveur."
+                      % ", ".join(fichiers), flush=True)
+                break
+        except KeyboardInterrupt:
+            serveur.terminate()
+            serveur.wait()
+            return 0
+        serveur.terminate()
+        serveur.wait()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Lance l'API pour le front : `python -m ibet serveur`.
 
-    Equivalent a `uvicorn ibet.interfaces.serveur:app --reload --port 8000`,
-    lance depuis la racine du projet. Le rechargement ne surveille que le code
-    (`ibet/`) : une ecriture dans `donnees/` ne relance pas le serveur.
+    Relance le serveur a chaque modification du code (`ibet/`) ; une ecriture
+    dans `donnees/` ne le relance pas. `--sans-rechargement` sert le code tel
+    qu'il est au lancement.
     """
     import argparse
 
@@ -705,11 +791,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Ne pas relancer le serveur a chaque modification du code",
     )
     args = parser.parse_args(argv)
-    uvicorn.run(
-        "ibet.interfaces.serveur:app",
-        host="127.0.0.1",
-        port=args.port,
-        reload=not args.sans_rechargement,
-        reload_dirs=[str(chemins.RACINE / "ibet")],
-    )
+    if not args.sans_rechargement:
+        return _servir_avec_rechargement(args.port)
+    uvicorn.run("ibet.interfaces.serveur:app", host="127.0.0.1", port=args.port)
     return 0
