@@ -4,7 +4,54 @@ Fichier : `ibet/modeles/cartons.py`. Clé : `cartons_jaunes`.
 
 ---
 
-## 3.0.0 — en service depuis le 2026-09-27
+## 3.1.0 — en service depuis le 2026-09-29
+
+**Changement** : les nombres de cartons attendus sont multipliés par **0,97**
+(recalage, `CALIBRATION`). Rien d'autre ne change.
+**Pourquoi** : sur les fiches émises, les « plus de X cartons au total »
+échouaient plus qu'annoncé (76 % annoncés, 65 % réalisés sur 43 propositions).
+Rejoué sur les feuilles de match, le défaut se confirme : le modèle 3.0.0
+attend un peu trop de cartons.
+**Mesure avant adoption** : `python -m ibet mesurer-sens`, propositions
+reconstruites comme le système les fait (lignes autour de la ligne principale,
+les deux sens, zone 60-85 %). Facteur choisi sur les 60 % de matchs les plus
+anciens (1 573), jugé sur les 40 % les plus récents (1 049) :
+
+| Test (1 049 matchs) | 3.0.0 | **3.1.0 (×0,97)** |
+|---|---|---|
+| « Plus de », annoncé → réalisé | 73,0 → 68,7 % (+4,3 ± 1,1) | 73,0 → 70,5 % (**+2,5**) |
+| « Plus de X au total » | 73,3 → 67,1 % (+6,1 ± 1,4) | 73,2 → 69,7 % (**+3,5**) |
+| « Moins de », annoncé → réalisé | 73,5 → 75,6 % (−2,2) | 73,4 → 74,4 % (**−1,0**) |
+| Log-vraisemblance par match | — | **+0,0087** (t = +2,0) |
+| Brier des propositions | 0,1921 | **0,1909** |
+
+À ×0,95, le gain ne se confirme pas (t = +1,4).
+
+### Ce que fait la version
+Celle de la 3.0.0 (historique de l'arbitre, feuilles de match, variance de
+l'arbitre), avec des nombres attendus recalés de ×0,97.
+
+### Points forts
+- Les deux sens sont maintenant presque équilibrés ; les « moins » restent
+  justes.
+
+### Points faibles
+- Les « plus de X cartons au total » promettent encore un peu trop (+3,5
+  points sur le test) : la loi du total est peut-être trop large, pas seulement
+  décalée.
+- La mesure porte sur le modèle rejoué à partir des feuilles, qui approche le
+  modèle en service sans être identique.
+
+### Pistes pour la suite
+- Re-mesurer la dispersion du total (corrélation + variance de l'arbitre).
+- Vérifier le recalage sur les fiches 3.1.0 tranchées (`python -m ibet etude`).
+
+### Mesures en service
+Pas encore de fiche tranchée en 3.1.0.
+
+---
+
+## 3.0.0 — retirée le 2026-09-29
 
 **Changement** : le profil de l'arbitre désigné ne part plus d'un a priori
 neutre (« arbitre moyen ») mais de son **historique** sur worldfootball.net :

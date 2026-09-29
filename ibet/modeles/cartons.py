@@ -21,8 +21,15 @@ DISPERSION = 0.847
 # correlation positive elargit la loi du total.
 CORRELATION = 0.083
 
-# Biais observe sur 100 matchs : +0.09. Pas de recalage.
-CALIBRATION = 1.0
+# 3.1.0 : recalage x0.97. Le modele attendait un peu trop de cartons : sur
+# 1 049 matchs de test (feuilles de match, 40 % les plus recents), les
+# « plus de » annonces a 73.0 % ne se realisaient qu'a 68.7 % (+4.3 +/- 1.1,
+# « plus de X au total » : +6.1), quand les « moins de » etaient justes. Le
+# facteur a ete choisi sur les 60 % anciens seulement (`python -m ibet
+# mesurer-sens`), puis juge sur le test : ecart des « plus » ramene a +2.5,
+# log-vraisemblance +0.0087 par match (t = +2.0), Brier des propositions
+# 0.1921 -> 0.1909. A x0.95, le gain ne se confirme pas (t = +1.4).
+CALIBRATION = 0.97
 
 # --- 2.0.0 : arbitre, joueurs, entraineur (voir `discipline.py`) -------------
 #
@@ -76,7 +83,7 @@ def _borne(facteur: float) -> float:
 
 class ModeleCartonsJaunes(ModeleParEquipe):
     cle = "cartons_jaunes"
-    version = "3.0.0"
+    version = "3.1.0"
     libelle = "Cartons jaunes"
     champ = "cartons_jaunes"
     seuil = CARDS_LINE
