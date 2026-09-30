@@ -4,7 +4,51 @@ Fichier : `ibet/modeles/tirs_cadres.py`. Clé : `tirs_cadres`.
 
 ---
 
-## 2.1.0 — en service depuis le 2026-09-28
+## 2.2.0 — en service depuis le 2026-09-30
+
+**Changement** : dispersion (rapport variance / moyenne) **1,396 → 1,10**. Rien
+d'autre ne change.
+**Pourquoi** : sur l'archive, le modèle 2.1.0 était trop **prudent dans les deux
+sens** : « plus de » annoncés 71,6 %, réalisés 75,0 % ; « moins de » 71,0 → 72,2 %
+(7 406 matchs de test, `python -m ibet mesurer-sens`). Les duels l'étaient aussi
+sur les fiches (annoncés 69-71 %, réalisés 74-87 %). La cause : la dispersion
+1,396 avait été mesurée sur le modèle de forme seul ; les nombres attendus
+corrigés par les cotes du marché (2.x) expliquent une part de la variance
+qu'elle attribuait au hasard, et la loi restait trop large.
+**Mesure avant adoption** : grille 1,0 à 1,615, choisie sur les saisons jusqu'à
+2022-23 (22 988 matchs, log-vraisemblance des comptes par équipe), jugée sur
+2023-24 et après (7 406 matchs) :
+
+| Test (7 406 matchs) | 2.1.0 (1,396) | **2.2.0 (1,10)** |
+|---|---|---|
+| Log-vraisemblance par match | — | **+0,027** (t = +11,1) |
+| « Plus de » : annoncé → réalisé | 71,6 → 75,0 % | **72,2 → 72,2 %** |
+| « Moins de » : annoncé → réalisé | 71,0 → 72,2 % | **71,9 → 72,2 %** |
+| Duels : annoncé → réalisé | 70,9 → 72,7 % | 71,3 → 70,6 % |
+
+### Ce que fait la version
+Celle de la 2.1.0 (correction par les cotes 1X2 et plus / moins 2,5 buts), avec
+une loi binomiale négative de dispersion 1,10 au lieu de 1,396.
+
+### Points forts
+- Les deux sens sont justes au dixième de point sur 7 406 matchs.
+- Plus grand gain de log-vraisemblance mesuré sur une dispersion dans le projet.
+
+### Points faibles
+- La mesure porte sur le modèle rejoué de l'archive (football-data.co.uk), qui
+  reproduit la correction du marché sans être le modèle en service à l'identique.
+- Les corners ont le même symptôme en plus faible (1,615 → 1,396 : +0,0047,
+  t = 2,9) mais la calibration des « plus » s'y dégrade : non changés.
+
+### Pistes pour la suite
+- Vérifier sur les fiches 2.2.0 tranchées (`python -m ibet etude`, page Calibration).
+
+### Mesures en service
+Pas encore de fiche tranchée en 2.2.0.
+
+---
+
+## 2.1.0 — retirée le 2026-09-30
 
 **Changement** : quand la cote plus / moins 2,5 buts est relevée avant le match
 (voir buts 2.1.0), la correction du marché passe au **jeu complet** de

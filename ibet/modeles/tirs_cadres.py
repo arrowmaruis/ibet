@@ -7,8 +7,19 @@ from .base import ModeleParEquipe
 
 SHOTS_LINE = 7.5
 
-# Rapport variance / moyenne : 1.396.
-DISPERSION = 1.396
+# Rapport variance / moyenne.
+#
+# 1.396 jusqu'a la 2.1.0 : mesure sur les residus du modele de forme SEUL. Les
+# nombres attendus corriges par les cotes du marche (2.x) expliquent une part de
+# la variance que ce chiffre attribuait au hasard : garde tel quel, il rendait
+# toutes les probabilites trop prudentes, dans les deux sens (« plus »
+# annonces 71.6 %, realises 75.0 % sur 7 406 matchs de test).
+#
+# 2.2.0 : 1.10, choisi sur les saisons jusqu'a 2022-23 (log-vraisemblance des
+# comptes par equipe, grille 1.0 a 1.615), juge sur 2023-24 et apres :
+# log-vraisemblance +0.027 par match (t = +11.1), « plus » 72.2 -> 72.2 %,
+# « moins » 71.9 -> 72.2 %.
+DISPERSION = 1.10
 
 # Correlation des residus entre les deux equipes : +0.010 +/- 0.017 (t = +0.6),
 # nulle, laissee a zero.
@@ -53,7 +64,7 @@ COEFS_MARCHE_TOTAL = {
 
 class ModeleTirsCadres(AvecApports, ModeleParEquipe):
     cle = "tirs_cadres"
-    version = "2.1.0"
+    version = "2.2.0"
     libelle = "Tirs cadres"
     champ = "tirs_cadres"
     seuil = SHOTS_LINE
