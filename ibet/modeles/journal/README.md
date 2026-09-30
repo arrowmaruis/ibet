@@ -7,8 +7,8 @@ ce qu'elle rate, et ce qu'on a appris en la mesurant.
 | Fichier | Modèle | Version en service |
 |---|---|---|
 | [moteur.md](moteur.md) | Socle commun : estimation Maher, lois, sélection des offres | 1.2.0 |
-| [buts.md](buts.md) | Buts | 2.1.0 |
-| [issue.md](issue.md) | Issue du match : 1X2, double chance, les deux marquent, scores exacts | 1.2.0 |
+| [buts.md](buts.md) | Buts | 2.2.0 |
+| [issue.md](issue.md) | Issue du match : 1X2, double chance, les deux marquent, scores exacts | 1.3.0 |
 | [corners.md](corners.md) | Corners : cotes du marché, styles des joueurs alignés | 3.0.0 |
 | [tirs_cadres.md](tirs_cadres.md) | Tirs cadrés : cotes du marché | 2.3.0 |
 | [cartons_jaunes.md](cartons_jaunes.md) | Cartons jaunes : historique de l'arbitre, arbitre, joueurs, entraîneur | 3.1.0 |

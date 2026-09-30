@@ -9,7 +9,43 @@ combinés).
 
 ---
 
-## 2.1.0 — en service depuis le 2026-09-28
+## 2.2.0 — en service depuis le 2026-09-30
+
+**Changement** : dispersion **1,173 → 1,0** (loi de Poisson). Rien d'autre ne
+change.
+**Pourquoi** : sur les fiches émises (buts 2.x, 76 matchs), le modèle était
+juste sur le niveau (total prévu 2,84, réel 2,86 ; pente 1,02) mais **trop
+prudent sur « Équipe : plus de X buts »** : annoncé 77,3 %, réalisé **92,5 %**
+(−15,2 ± 3,8 points, 53 propositions). À ce niveau de probabilité, c'est « l'équipe
+marque au moins un but » : la loi prévoyait trop d'équipes à zéro. La dispersion
+1,173 avait été mesurée sur le modèle de forme, avant les notes au maximum de
+vraisemblance et le recalage du total sur le marché.
+**Mesure avant adoption** : archive football-data.co.uk, nombres attendus
+corrigés par les cotes 1X2 et plus / moins 2,5, dispersion choisie sur les
+saisons jusqu'à 2022-23 (25 896 matchs), jugée sur 2023-24 et après (7 407) :
+
+| Test (7 407 matchs) | 2.1.0 (1,173) | **2.2.0 (1,0)** |
+|---|---|---|
+| Log-vraisemblance par match | — | **+0,023** (t = +14,9) |
+| Équipes à zéro but : prévu / observé | 30,0 % / 25,6 % | **27,3 %** / 25,6 % |
+| Équipe « plus de » : annoncé → réalisé | 70,8 → 76,1 % | **71,4 → 73,8 %** |
+| Équipe « moins de » | 73,7 → 73,1 % | 73,6 → 72,9 % |
+| Total « plus de » | 71,9 → 76,0 % | **73,2 → 74,9 %** |
+| Total « moins de » | 74,1 → 74,0 % | 74,1 → 73,2 % |
+
+### Ce que fait la version
+Celle de la 2.1.0, sous une loi de Poisson.
+
+### Points faibles
+- Les « plus » restent un peu prudents (−1,7 à −2,4 points sur l'archive).
+- L'issue en dépend (même matrice des scores) : issue 1.3.0.
+
+### Mesures en service
+Pas encore de fiche tranchée en 2.2.0.
+
+---
+
+## 2.1.0 — retirée le 2026-09-30
 
 **Changement** : quand la cote plus / moins 2,5 buts est relevée avant le match
 (the-odds-api, consensus des opérateurs, marge de chacun retirée), le **total

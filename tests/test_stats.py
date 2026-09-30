@@ -799,7 +799,7 @@ def main(argv: list[str] | None = None) -> int:
         True,
     )
     # Dispersions mesurees, chacune sur des milliers de matchs (voir DISPERSION).
-    check("buts legerement surdisperses", predict.DISPERSION["buts"], 1.173)
+    check("buts : Poisson depuis la 2.2.0", predict.DISPERSION["buts"], 1.0)
     check("cartons sous-disperses", predict.DISPERSION["cartons_jaunes"] < 1.0, True)
     check("corners les plus disperses",
           max(predict.DISPERSION, key=predict.DISPERSION.get), "corners")

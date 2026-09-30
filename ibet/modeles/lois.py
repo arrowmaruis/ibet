@@ -109,7 +109,7 @@ def count_pmf(k: int, mean: float, dispersion: float = 1.0) -> float:
 
     Dispersions mesurees, chacune sur des milliers de matchs, equipe par equipe
     rapportee a sa propre moyenne (voir `dispersion` dans chaque modele) : buts
-    1.173, corners 1.615, tirs cadres 1.396, cartons jaunes 0.847. Les cartons sont la seule grandeur
+    1.0 depuis buts 2.2.0 (1.173 avant), corners 1.615, tirs cadres 1.10 ou 1.396, cartons 0.847. Les cartons sont la seule grandeur
     SOUS-dispersee -- il s'en donne un nombre remarquablement regulier.
     """
     if mean <= 0:

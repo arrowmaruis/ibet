@@ -14,7 +14,19 @@ versions avec `python -m ibet etude --modele issue` et `--modele buts`.
 
 ---
 
-## 1.2.0 — en service depuis le 2026-09-28
+## 1.3.0 — en service depuis le 2026-09-30
+
+**Changement** : aucun changement de code. La matrice des scores suit la
+dispersion des buts 2.2.0 (1,0 au lieu de 1,173) : moins de scores à zéro,
+donc des probabilités de victoire, de nul et de « les deux marquent » qui
+bougent. La règle du journal impose un nouveau numéro.
+
+### Mesures en service
+Pas encore de fiche tranchée en 1.3.0.
+
+---
+
+## 1.2.0 — retirée le 2026-09-30
 
 **Changement** : aucun changement de code. Les buts 2.1.0 recalent le total
 attendu sur la cote plus / moins 2,5 quand elle est relevée ; la matrice des

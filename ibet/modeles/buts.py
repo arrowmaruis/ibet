@@ -22,11 +22,23 @@ from .lois import _blend, _grid_probability, score_matrix
 # Seuils usuels, exprimes en demi-unites pour qu'aucun resultat ne tombe dessus.
 GOALS_LINE = 2.5
 
-# Dispersion mesuree equipe par equipe, rapportee a sa propre moyenne : 1.173,
-# legere sur-dispersion. Correlation des residus entre les deux equipes :
-# -0.008 +/- 0.010 (t = -0.8), nulle, laissee a zero. Biais d'echelle mesure a
-# -0.02 sur 100 matchs : pas de recalage.
-DISPERSION = 1.173
+# Dispersion (rapport variance / moyenne).
+#
+# 1.173 jusqu'a la 2.1.0 : mesure sur les residus du modele de forme, quand les
+# nombres attendus etaient moins precis. Avec les notes au maximum de
+# vraisemblance et le total recale sur le marche (2.x), la loi etait trop large :
+# elle prevoyait trop d'equipes a zero but (30.0 % contre 25.6 % observes sur
+# 7 407 matchs de test), d'ou des « Equipe : plus de X buts » annonces 77.3 %
+# et realises 92.5 % sur les fiches emises (53 propositions).
+#
+# 2.2.0 : 1.0 (Poisson), choisi sur l'archive football-data.co.uk jusqu'en
+# 2022-23 (nombres attendus corriges par les cotes 1X2 et plus / moins 2,5),
+# juge sur 2023-24 et apres : log-vraisemblance +0.023 par match (t = +14.9),
+# equipes a zero prevues 27.3 % pour 25.6 %, « plus » par equipe 71.4 -> 73.8 %.
+DISPERSION = 1.0
+# Correlation des residus entre les deux equipes : -0.008 +/- 0.010 (t = -0.8),
+# nulle, laissee a zero. Biais d'echelle mesure a -0.02 sur 100 matchs : pas de
+# recalage.
 CORRELATION = 0.0
 CALIBRATION = 1.0
 
@@ -159,7 +171,7 @@ LIGNE_TOTAL_MARCHE = 2.5
 
 class ModeleButs(ModeleEvenement):
     cle = "buts"
-    version = "2.1.0"
+    version = "2.2.0"
     libelle = "Buts"
     champ = None
     seuil = GOALS_LINE
