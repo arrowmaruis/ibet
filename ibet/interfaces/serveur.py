@@ -479,6 +479,7 @@ def calibration() -> dict[str, Any]:
         verify.bilan_par_option(),
         par_sens=verify.bilan_par_sens(),
         par_version=etude.bilan(),
+        cloture=marche.bilan_cloture(),
     )
 
 
@@ -665,7 +666,8 @@ def list_coupons() -> dict[str, Any]:
     rendus = []
     for coupon in store.coupons():
         rendus.append(dict(coupon, verification=verify.verifier_coupon(coupon)))
-    return {"total": len(rendus), "coupons": rendus}
+    return {"total": len(rendus), "coupons": rendus,
+            "rendement": verify.bilan_des_coupons(rendus)}
 
 
 @app.post("/api/coupons")

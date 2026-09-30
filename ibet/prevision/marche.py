@@ -369,6 +369,90 @@ def valeur_a_la_cloture(cote_prise: float, cote_cloture: float) -> float | None:
     return cote_prise / cote_cloture - 1.0
 
 
+def bilan_cloture(tz_name: str = "Europe/Paris", limite: int = 5000) -> dict[str, Any]:
+    """Le marche a-t-il bouge vers le modele entre l'emission et le coup d'envoi ?
+
+    Pour chaque fiche dont le 1X2 a ete releve au moins deux fois AVANT le coup
+    d'envoi -- a l'emission, puis a la reemission une heure avant le match --,
+    le premier releve est le prix « pris », le dernier le prix de cloture.
+
+      - **valeur a la cloture** (CLV) sur les issues ou le modele SEUL voyait de
+        la valeur a l'emission (probabilite du modele >= marche + VALEUR_MIN) :
+        positive, on a pris un meilleur prix que celui vers lequel le marche a
+        converge ;
+      - **mouvement vers le modele**, sur toutes les issues : part des cas ou
+        la probabilite du marche a bouge dans le sens ou le modele s'en ecartait.
+        Au-dessus de 50 %, le modele voit avant le marche ce que le marche finit
+        par voir.
+
+    Deux signaux qui se mesurent sur des dizaines de paris, la ou le rendement en
+    demande des milliers (voir `valeur_a_la_cloture`).
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    with store.connect() as connexion:
+        ids = [r[0] for r in connexion.execute(
+            "SELECT match_id FROM cotes WHERE marche = '1x2'"
+            " GROUP BY match_id HAVING COUNT(*) >= 2 LIMIT ?", (limite,))]
+    clv: list[float] = []
+    accords: list[float] = []
+    matchs = 0
+    for match_id in ids:
+        fiche = store.get(match_id)
+        if not fiche:
+            continue
+        try:
+            coup = datetime.strptime(fiche.get("coup_denvoi_local") or "", "%Y-%m-%d %H:%M").replace(
+                tzinfo=ZoneInfo(tz_name))
+        except ValueError:
+            continue
+        releves = [r for r in store.odds_history(match_id)
+                   if datetime.fromisoformat(r["releve_le"]) < coup and r.get("cotes")]
+        if len(releves) < 2:
+            continue
+        prise, cloture = releves[0]["cotes"], releves[-1]["cotes"]
+        p0, p1 = probabilites_implicites(prise), probabilites_implicites(cloture)
+        buts = next((g for g in fiche.get("grandeurs") or []
+                     if g.get("cle") == "buts" or g.get("grandeur") == "Buts"), {})
+        modele = (buts.get("marche") or {}).get("issue_modele") or buts.get("issue") or {}
+        if not p0 or not p1 or not modele:
+            continue
+        matchs += 1
+        for issue in ("domicile", "nul", "exterieur"):
+            if issue not in modele or issue not in p0 or issue not in p1:
+                continue
+            ecart = float(modele[issue]) - p0[issue]
+            mouvement = p1[issue] - p0[issue]
+            if abs(ecart) > 1e-9 and abs(mouvement) > 1e-9:
+                accords.append(1.0 if ecart * mouvement > 0 else 0.0)
+            if ecart >= VALEUR_MIN:
+                v = valeur_a_la_cloture(prise.get(issue), cloture.get(issue))
+                if v is not None:
+                    clv.append(v)
+
+    def moyenne_et_erreur(valeurs: list[float]) -> tuple[float | None, float | None]:
+        if not valeurs:
+            return None, None
+        m = sum(valeurs) / len(valeurs)
+        if len(valeurs) < 2:
+            return m, None
+        return m, (sum((x - m) ** 2 for x in valeurs) / (len(valeurs) - 1) / len(valeurs)) ** 0.5
+
+    clv_m, clv_e = moyenne_et_erreur(clv)
+    acc_m, acc_e = moyenne_et_erreur(accords)
+    return {
+        "matchs": matchs,
+        "paris_valeur": len(clv),
+        "clv_moyenne": clv_m,
+        "clv_erreur_type": clv_e,
+        "clv_positive": (sum(1 for v in clv if v > 0) / len(clv)) if clv else None,
+        "issues_qui_ont_bouge": len(accords),
+        "vers_le_modele": acc_m,
+        "vers_le_modele_erreur_type": acc_e,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Melange du modele et du marche
 # ---------------------------------------------------------------------------

@@ -3215,6 +3215,19 @@ def main(argv: list[str] | None = None) -> int:
           _pl.a_reemettre(_fiche_dans(60, emission="avant-match"), "Europe/Paris"), False)
     check("coup d'envoi illisible : ignoree", _pl.a_reemettre({}, "Europe/Paris"), False)
 
+    print("\nZ18. Coupons : rendement du combine et des simples, mise de 1")
+    def _l(mid, cote, ok):
+        return {"match_id": mid, "match": mid, "cote": cote, "cote_source": "estimee", "realise": ok}
+    r_gagne = _verify.rendement_du_coupon([_l("A", 1.30, True), _l("B", 1.40, True)])
+    check("combine gagne : gain = cote - 1", (r_gagne["combine"]["statut"], r_gagne["combine"]["gain"]), ("gagne", 0.82))
+    r_perdu = _verify.rendement_du_coupon([_l("A", 1.30, True), _l("B", 1.40, False)])
+    check("combine perdu : -1", (r_perdu["combine"]["statut"], r_perdu["combine"]["gain"]), ("perdu", -1.0))
+    check("simples : +0.30 - 1", r_perdu["simples"]["gain"], -0.7)
+    r_attente = _verify.rendement_du_coupon([_l("A", 1.30, True), _l("B", 1.40, None)])
+    check("combine en attente : pas de gain", (r_attente["combine"]["statut"], r_attente["combine"]["gain"]), ("en attente", None))
+    r_deux = _verify.rendement_du_coupon([_l("A", 1.30, True), _l("A", 2.00, False), _l("B", 1.40, True)])
+    check("combine : la premiere option de chaque match seulement", r_deux["combine"]["selections"], 2)
+
     print()
     if failures:
         print("%d test(s) en echec : %s" % (len(failures), ", ".join(failures)))

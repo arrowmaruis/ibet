@@ -532,12 +532,15 @@ def verifier_coupon(coupon: dict[str, Any]) -> dict[str, Any]:
             verdict = (
                 check_offer(pari, equipes, valeurs) if valeurs else None
             )
+            cote, source = _cote_du_conseil(conseil)
             lignes.append(
                 {
                     "match": bloc_match.get("match", ""),
                     "match_id": bloc_match.get("match_id", ""),
                     "pari": pari,
                     "probabilite": conseil.get("probabilite"),
+                    "cote": cote,
+                    "cote_source": source,
                     "score": (resultat or {}).get("score", ""),
                     # None = le match n'est pas tranche, ou la proposition n'est
                     # pas verifiable ici. Ce n'est pas un echec.
@@ -566,7 +569,86 @@ def verifier_coupon(coupon: dict[str, Any]) -> dict[str, Any]:
                 "ecart": annonce - observe,
             }
         )
+    resume.update(rendement_du_coupon(lignes))
     return {"lignes": lignes, "resume": resume}
+
+
+def _cote_du_conseil(conseil: dict[str, Any]) -> tuple[float | None, str]:
+    """La cote d'un conseil : celle qu'il porte, sinon estimee (marge mediane)."""
+    from ibet.modeles import offres
+
+    for cle in ("cote", "cote_estimee"):
+        if conseil.get(cle):
+            return float(conseil[cle]), ("relevee" if cle == "cote" else "estimee")
+    p = conseil.get("probabilite")
+    return (offres.cote_estimee(float(p)), "estimee") if p else (None, "inconnue")
+
+
+def rendement_du_coupon(lignes: list[dict[str, Any]]) -> dict[str, Any]:
+    """Ce que le coupon aurait rapporte, pour une mise de 1.
+
+    Le taux de reussite ne juge pas un coupon : « 13 sur 13 » a 1.02 l'option
+    rapporte presque rien, « 2 sur 3 » a 1.35 peut rapporter davantage. Deux
+    lectures :
+
+      - **combine** : la PREMIERE option de chaque match, toutes ensemble -- le
+        combine que le composeur propose. Gagne si toutes passent ;
+      - **simples** : 1 mise sur chaque option tranchee, separement.
+
+    Les cotes sont celles du coupon quand il en porte, sinon estimees d'apres la
+    marge mediane des bookmakers (`offres.cote_estimee`) -- `cotes` le dit.
+    """
+    premieres: dict[str, dict[str, Any]] = {}
+    for ligne in lignes:
+        premieres.setdefault(ligne["match_id"] or ligne["match"], ligne)
+    combine = list(premieres.values())
+    sources = {l["cote_source"] for l in lignes if l.get("cote") is not None}
+    rendu: dict[str, Any] = {"cotes": "relevees" if sources == {"relevee"} else "estimees"}
+
+    if combine and all(l.get("cote") for l in combine):
+        cote = 1.0
+        for l in combine:
+            cote *= l["cote"]
+        if any(l["realise"] is False for l in combine):
+            statut, gain = "perdu", -1.0
+        elif all(l["realise"] is True for l in combine):
+            statut, gain = "gagne", cote - 1.0
+        else:
+            statut, gain = "en attente", None
+        rendu["combine"] = {"selections": len(combine), "cote": round(cote, 2),
+                            "statut": statut, "gain": None if gain is None else round(gain, 2)}
+
+    tranchees = [l for l in lignes if l["realise"] is not None and l.get("cote")]
+    if tranchees:
+        gain = sum((l["cote"] - 1.0) if l["realise"] else -1.0 for l in tranchees)
+        rendu["simples"] = {"mises": len(tranchees), "gain": round(gain, 2),
+                            "rendement": round(gain / len(tranchees), 4)}
+    return rendu
+
+
+def bilan_des_coupons(coupons: list[dict[str, Any]]) -> dict[str, Any]:
+    """Rendement cumule des coupons tranches : combines et simples, mise 1."""
+    combines = mises = 0
+    gain_combines = gain_simples = 0.0
+    gagnes = 0
+    for coupon in coupons:
+        resume = verifier_coupon(coupon)["resume"]
+        c = resume.get("combine")
+        if c and c["gain"] is not None:
+            combines += 1
+            gain_combines += c["gain"]
+            gagnes += c["statut"] == "gagne"
+        s = resume.get("simples")
+        if s:
+            mises += s["mises"]
+            gain_simples += s["gain"]
+    return {
+        "combines": {"joues": combines, "gagnes": gagnes, "gain": round(gain_combines, 2),
+                     "rendement": round(gain_combines / combines, 4) if combines else None},
+        "simples": {"mises": mises, "gain": round(gain_simples, 2),
+                    "rendement": round(gain_simples / mises, 4) if mises else None},
+        "cotes": "estimees d'apres la marge mediane des bookmakers, sauf cote relevee",
+    }
 
 
 def verify_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
