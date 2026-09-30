@@ -180,9 +180,14 @@ class ModeleEvenement:
         return params.rho if self.dixon_coles else RHO
 
     def dispersion_effective(
-        self, sample: float, params: Params = DEFAULT_PARAMS
+        self, sample: float, params: Params = DEFAULT_PARAMS, base: float | None = None
     ) -> float:
-        return dispersion_effective(self.dispersion, sample, params)
+        return dispersion_effective(self.dispersion if base is None else base, sample, params)
+
+    def dispersion_pour(self, trace: dict[str, Any] | None) -> float:
+        """Dispersion du processus pour CETTE prevision, selon ce que les apports
+        ont fait (`trace` rendue par `ajuster`). Par defaut, la constante."""
+        return self.dispersion
 
     # --- Premiere phase : estimer ---------------------------------------------
 
@@ -445,8 +450,9 @@ class ModeleEvenement:
         # matchs dont deux presque oublies par la ponderation n'en valent pas
         # cinq. A `estimation_dispersion = 0`, les deux valent la constante et
         # rien ne change.
-        phi_home = self.dispersion_effective(home_weight, params)
-        phi_away = self.dispersion_effective(away_weight, params)
+        base_phi = self.dispersion_pour(trace)
+        phi_home = self.dispersion_effective(home_weight, params, base_phi)
+        phi_away = self.dispersion_effective(away_weight, params, base_phi)
         lam_home, lam_away, calage = self.caler(
             (lam_home, lam_away), apports, rho, phi_home, phi_away
         )

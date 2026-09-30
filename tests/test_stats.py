@@ -3228,6 +3228,42 @@ def main(argv: list[str] | None = None) -> int:
     r_deux = _verify.rendement_du_coupon([_l("A", 1.30, True), _l("A", 2.00, False), _l("B", 1.40, True)])
     check("combine : la premiere option de chaque match seulement", r_deux["combine"]["selections"], 2)
 
+    print("\nZ19. Bilan des fiches : seulement les meilleures propositions")
+    import tempfile
+    from pathlib import Path as _Path
+
+    base_reelle = store.DB_PATH
+    # Les connexions SQLite restent ouvertes sous Windows : le dossier ne se
+    # supprime pas toujours, sans que cela dise rien du test.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as dossier:
+        store.DB_PATH = _Path(dossier) / "bilan.db"
+        try:
+            store.init()
+            with store.connect() as cx:
+                cx.execute(
+                    "INSERT INTO predictions (id, match_id, emis_le, libelle, payload, resultat_reel)"
+                    " VALUES (1, 'm1', '2026-09-30', 'A - B', '{}', '{}')"
+                )
+                # Sept propositions : les cinq plus probables realisees, les
+                # deux moins sures ratees. Elles ne doivent pas compter.
+                for rang, (p, ok) in enumerate(
+                    [(0.95, 1), (0.60, 0), (0.90, 1), (0.88, 1), (0.62, 0), (0.85, 1), (0.80, 1)]
+                ):
+                    cx.execute(
+                        "INSERT INTO offres (prediction_id, grandeur, pari, probabilite, verifie)"
+                        " VALUES (1, 'Buts', ?, ?, ?)",
+                        ("pari %d" % rang, p, ok),
+                    )
+            fiche_bilan = store.all_predictions()[0]["offres"]
+            check("fiche : seulement les 5 meilleures", fiche_bilan,
+                  {"total": 5, "tranchees": 5, "reussies": 5})
+            global_bilan = store.tally()
+            check("bilan global : meme coupe", (global_bilan["offres_tranchees"],
+                                                global_bilan["taux_reussite"]), (5, 1.0))
+            check("annonce moyenne des retenues", round(global_bilan["annonce_moyen"], 3), 0.876)
+        finally:
+            store.DB_PATH = base_reelle
+
     print()
     if failures:
         print("%d test(s) en echec : %s" % (len(failures), ", ".join(failures)))

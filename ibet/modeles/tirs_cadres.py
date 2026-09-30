@@ -7,19 +7,23 @@ from .base import ModeleParEquipe
 
 SHOTS_LINE = 7.5
 
-# Rapport variance / moyenne.
+# Rapport variance / moyenne, selon que les cotes du marche ont corrige la
+# prevision ou non (`dispersion_pour`).
 #
-# 1.396 jusqu'a la 2.1.0 : mesure sur les residus du modele de forme SEUL. Les
-# nombres attendus corriges par les cotes du marche (2.x) expliquent une part de
-# la variance que ce chiffre attribuait au hasard : garde tel quel, il rendait
-# toutes les probabilites trop prudentes, dans les deux sens (« plus »
-# annonces 71.6 %, realises 75.0 % sur 7 406 matchs de test).
+# SANS cotes : 1.396, mesure sur les residus du modele de forme seul.
 #
-# 2.2.0 : 1.10, choisi sur les saisons jusqu'a 2022-23 (log-vraisemblance des
-# comptes par equipe, grille 1.0 a 1.615), juge sur 2023-24 et apres :
-# log-vraisemblance +0.027 par match (t = +11.1), « plus » 72.2 -> 72.2 %,
-# « moins » 71.9 -> 72.2 %.
-DISPERSION = 1.10
+# AVEC cotes (2.x) : 1.10. Les nombres attendus corriges par le marche
+# expliquent une part de la variance que 1.396 attribuait au hasard. Choisi sur
+# l'archive football-data.co.uk (tous les matchs y ont des cotes) jusqu'en
+# 2022-23, juge sur 2023-24 et apres : log-vraisemblance +0.027 par match
+# (t = +11.1), « plus » 72.2 -> 72.2 %, « moins » 71.9 -> 72.2 %.
+#
+# La 2.2.0 appliquait 1.10 a toutes les fiches. Sur les fiches reellement
+# emises SANS cotes, la loi etait alors trop etroite : lignes par equipe
+# annoncees 71.8 %, realisees 63.6 % (a 1.396 : 72.2 -> 72.2 %). Avec cotes,
+# les deux valeurs tiennent (72.3 -> 71.8 % a 1.10). D'ou la 2.3.0.
+DISPERSION = 1.396
+DISPERSION_MARCHE = 1.10
 
 # Correlation des residus entre les deux equipes : +0.010 +/- 0.017 (t = +0.6),
 # nulle, laissee a zero.
@@ -64,7 +68,7 @@ COEFS_MARCHE_TOTAL = {
 
 class ModeleTirsCadres(AvecApports, ModeleParEquipe):
     cle = "tirs_cadres"
-    version = "2.2.0"
+    version = "2.3.0"
     libelle = "Tirs cadres"
     champ = "tirs_cadres"
     seuil = SHOTS_LINE
@@ -83,3 +87,7 @@ class ModeleTirsCadres(AvecApports, ModeleParEquipe):
     poids_styles = POIDS_STYLES
     coefs_marche = COEFS_MARCHE
     coefs_marche_total = COEFS_MARCHE_TOTAL
+
+    def dispersion_pour(self, trace):
+        """1.10 quand les cotes du marche ont corrige la prevision, 1.396 sinon."""
+        return DISPERSION_MARCHE if (trace or {}).get("marche") else self.dispersion

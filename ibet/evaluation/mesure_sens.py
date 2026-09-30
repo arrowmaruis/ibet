@@ -77,7 +77,9 @@ def propositions(grandeur: str, ld: float, le: float, yd: int, ye: int,
 
 def mesurer(grandeur: str, matchs: list[dict[str, Any]], facteur: float = 1.0) -> dict:
     """Annonce / observe par (portee, sens), erreur type groupee par match."""
-    phi = MODELES[grandeur].dispersion
+    # L'archive (corners, tirs cadres) a toujours des cotes : la dispersion est
+    # celle d'une prevision corrigee par le marche.
+    phi = MODELES[grandeur]().dispersion_pour({"marche": True} if grandeur != "cartons_jaunes" else None)
     corr = MODELES[grandeur].correlation
     par: dict[tuple[str, str], list[tuple[int, float, bool]]] = defaultdict(list)
     for i, x in enumerate(matchs):

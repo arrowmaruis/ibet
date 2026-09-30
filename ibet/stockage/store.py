@@ -950,17 +950,40 @@ def _summary(row: sqlite3.Row, offers: dict[int, dict[str, int]]) -> dict[str, A
     }
 
 
+#: Propositions comptees par fiche : les N plus probables, toutes grandeurs
+#: confondues -- celles que la fiche met en avant. Une fiche en emet une
+#: vingtaine ; compter les moins sures melait au bilan des paris que personne
+#: ne joue. Sur 166 fiches tranchees (septembre 2026) : toutes les propositions
+#: 79.8 % de reussite, les 5 meilleures 88.3 %, les 3 meilleures 90.2 %.
+#:
+#: Le front classe et coupe de la meme facon (`bestOffers`, `ibet-web`) : les
+#: deux valeurs doivent rester egales.
+MEILLEURES_PROPOSITIONS = 5
+
+#: Les propositions retenues, dans l'ordre ou la fiche les classe : probabilite
+#: decroissante, puis ordre d'emission a egalite (celui des grandeurs), comme le
+#: tri stable du front.
+_OFFRES_RETENUES = """
+    SELECT * FROM (
+        SELECT offres.*,
+               ROW_NUMBER() OVER (PARTITION BY prediction_id
+                                  ORDER BY probabilite DESC, id) AS rang
+          FROM offres
+    ) WHERE rang <= %d
+""" % MEILLEURES_PROPOSITIONS
+
+
 def _offer_counts(connection: sqlite3.Connection) -> dict[int, dict[str, int]]:
-    """Compte des propositions par prevision : total, tranchees, reussies."""
+    """Compte des propositions retenues par prevision : total, tranchees, reussies."""
     rows = connection.execute(
         """
         SELECT prediction_id,
                COUNT(*)                                   AS total,
                SUM(verifie IS NOT NULL)                   AS tranchees,
                SUM(COALESCE(verifie, 0))                  AS reussies
-          FROM offres
+          FROM (%s)
          GROUP BY prediction_id
-        """
+        """ % _OFFRES_RETENUES
     ).fetchall()
     return {
         row["prediction_id"]: {
@@ -1026,6 +1049,10 @@ def tally() -> dict[str, Any]:
     avec un modele pire, et proposer des coups de piece donnerait 50 % avec un
     modele parfait. Le NIVEAU est un choix de ce qu'on propose ; la QUALITE est
     l'ecart entre annonce et observe.
+
+    Seules comptent les `MEILLEURES_PROPOSITIONS` de chaque fiche, comme dans
+    la liste et dans la fiche. La calibration, elle, garde toutes les
+    propositions : elle mesure si 70 % vaut 70 %, et il lui faut toute l'echelle.
     """
     with connect() as connection:
         row = connection.execute(
@@ -1035,8 +1062,8 @@ def tally() -> dict[str, Any]:
                    SUM(COALESCE(verifie, 0)) AS reussies,
                    AVG(CASE WHEN verifie IS NOT NULL THEN probabilite END)
                                              AS annonce
-              FROM offres
-            """
+              FROM (%s)
+            """ % _OFFRES_RETENUES
         ).fetchone()
         predictions = connection.execute(
             "SELECT COUNT(*) AS n, SUM(resultat_reel IS NOT NULL) AS verifiees FROM predictions"
@@ -1051,6 +1078,9 @@ def tally() -> dict[str, Any]:
         "offres_tranchees": settled,
         "offres_reussies": won,
         "taux_reussite": (won / settled) if settled else None,
+        # Le nombre de propositions retenues par fiche, pour que l'ecran puisse
+        # dire sur quoi porte le taux.
+        "meilleures_par_fiche": MEILLEURES_PROPOSITIONS,
         # Ce que le modele promettait en moyenne sur ces memes propositions.
         "annonce_moyen": row["annonce"],
         # Positif = il a promis plus qu'il n'a tenu. C'est le seul des trois

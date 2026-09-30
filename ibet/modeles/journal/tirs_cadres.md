@@ -4,7 +4,38 @@ Fichier : `ibet/modeles/tirs_cadres.py`. Clé : `tirs_cadres`.
 
 ---
 
-## 2.2.0 — en service depuis le 2026-09-30
+## 2.3.0 — en service depuis le 2026-09-30
+
+**Changement** : la dispersion dépend de la prévision. **1,10** quand les cotes
+du marché ont corrigé les nombres attendus, **1,396** sinon
+(`dispersion_pour`). La 2.2.0 appliquait 1,10 partout.
+**Pourquoi** : la 2.2.0 avait été mesurée sur l'archive football-data.co.uk,
+où **tous** les matchs ont des cotes. Sur les fiches réellement émises, la moitié
+des matchs n'en a pas, et leur modèle est alors celui de la forme seule, pour
+lequel 1,396 avait été mesuré. Vérifié sur les fiches émises et tranchées
+(lignes par équipe, zone 60-85 %) :
+
+| Fiches émises | 1,10 | 1,396 |
+|---|---|---|
+| **Avec** cotes (34 matchs) | 72,3 → 71,8 % ✅ | 72,2 → 73,0 % ✅ |
+| **Sans** cotes (8 matchs) | 71,8 → **63,6 %** ❌ | **72,2 → 72,2 %** ✅ |
+
+Échantillon de production petit (42 matchs) ; il concorde avec les deux mesures
+antérieures (archive avec cotes → 1,10 ; modèle de forme seul → 1,396).
+
+### Ce que fait la version
+Celle de la 2.2.0, avec une dispersion choisie prévision par prévision.
+
+### Points faibles
+- Les fourchettes et les duels gardent la dispersion sans cotes (1,396) :
+  plus prudents qu'ils ne pourraient l'être quand les cotes sont connues.
+
+### Mesures en service
+Pas encore de fiche tranchée en 2.3.0.
+
+---
+
+## 2.2.0 — retirée le 2026-09-30
 
 **Changement** : dispersion (rapport variance / moyenne) **1,396 → 1,10**. Rien
 d'autre ne change.
