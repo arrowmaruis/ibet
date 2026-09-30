@@ -17,6 +17,7 @@ import sys
 COMMANDES: dict[str, tuple[str, str]] = {
     "matchs": ("ibet.interfaces.cli", "matchs, stats, forme, prevision, backtest, valeur (commande par defaut)"),
     "serveur": ("ibet.interfaces.serveur", "API HTTP pour le front (port 8000, rechargement auto)"),
+    "planificateur": ("ibet.prevision.planificateur", "verifie, reemet avant le match (arbitre, compositions) et emet, en continu"),
     "emettre": ("ibet.prevision.forecast", "emet et enregistre les previsions des matchs a venir"),
     "verifier": ("ibet.evaluation.verify", "tranche les previsions dont le match est fini"),
     "etude": ("ibet.evaluation.etude", "compare ce que chaque version de chaque modele a donne"),

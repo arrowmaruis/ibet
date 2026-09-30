@@ -3201,6 +3201,20 @@ def main(argv: list[str] | None = None) -> int:
           (_fc.trop_tard(_match_dans(120)) or "").startswith("match commence"), True)
     _h.fixer(0.0)
 
+    print("\nZ17. Planificateur : reemission une heure avant le match, une seule fois")
+    from zoneinfo import ZoneInfo as _Zi
+    from ibet.prevision import planificateur as _pl
+
+    def _fiche_dans(minutes: float, **extra) -> dict:
+        coup = (_dt.now(_tz.utc) + _td(minutes=minutes)).astimezone(_Zi("Europe/Paris"))
+        return dict({"coup_denvoi_local": coup.strftime("%Y-%m-%d %H:%M")}, **extra)
+    check("match dans 1 h : a reemettre", _pl.a_reemettre(_fiche_dans(60), "Europe/Paris"), True)
+    check("match dans 4 h : trop tot", _pl.a_reemettre(_fiche_dans(240), "Europe/Paris"), False)
+    check("match dans 10 min : trop tard", _pl.a_reemettre(_fiche_dans(10), "Europe/Paris"), False)
+    check("deja reemise : pas deux fois",
+          _pl.a_reemettre(_fiche_dans(60, emission="avant-match"), "Europe/Paris"), False)
+    check("coup d'envoi illisible : ignoree", _pl.a_reemettre({}, "Europe/Paris"), False)
+
     print()
     if failures:
         print("%d test(s) en echec : %s" % (len(failures), ", ".join(failures)))

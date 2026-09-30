@@ -422,6 +422,50 @@ def bilan_par_option(limite: int = 5000) -> dict[str, Any]:
     }
 
 
+_SENS_PARI = re.compile(r"\b(plus|moins) de \d", re.IGNORECASE)
+
+
+def sens_de(pari: str) -> str | None:
+    """« plus », « moins », ou None (issue, duel, combine). Le seuil exige un
+    chiffre : « Victoire de l'une ou l'autre » ne doit pas passer pour un total."""
+    libelle = pari.lower()
+    if " et " in libelle or " pour " in libelle:
+        return None
+    trouve = _SENS_PARI.search(libelle)
+    return trouve.group(1).lower() if trouve else None
+
+
+def bilan_par_sens(limite: int = 20000) -> list[dict[str, Any]]:
+    """Annonce / observe des « plus de » et des « moins de », par grandeur.
+
+    Meme mesure que `bilan_par_option` (erreur type groupee par match). Les
+    deux sens echouent differemment : un match ouvert fait tomber tous ses
+    « moins » d'un coup, et c'est ce que la ventilation par famille cache.
+    """
+    with store.connect() as connection:
+        lignes = connection.execute(
+            "SELECT p.match_id, o.grandeur, o.pari, o.probabilite, o.verifie"
+            " FROM offres o JOIN predictions p ON p.id = o.prediction_id"
+            " WHERE o.verifie IS NOT NULL LIMIT ?",
+            (limite,),
+        ).fetchall()
+    groupes: dict[tuple[str, str], list[tuple[str, float, bool]]] = {}
+    for ligne in lignes:
+        sens = sens_de(ligne["pari"])
+        if not sens:
+            continue
+        obs = (ligne["match_id"], ligne["probabilite"], bool(ligne["verifie"]))
+        groupes.setdefault(("Toutes", sens), []).append(obs)
+        groupes.setdefault((ligne["grandeur"], sens), []).append(obs)
+    rendu = []
+    for (grandeur, sens), obs in groupes.items():
+        mesure = _mesure_groupee(obs)
+        if mesure:
+            rendu.append(dict(mesure, grandeur=grandeur, sens=sens))
+    rendu.sort(key=lambda m: (m["grandeur"] != "Toutes", m["grandeur"], m["sens"]))
+    return rendu
+
+
 def _valeurs_du_resultat(
     resultat: dict[str, Any] | None, grandeur: str
 ) -> tuple[float, float] | None:

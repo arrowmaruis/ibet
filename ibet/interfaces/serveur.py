@@ -76,31 +76,33 @@ app.add_middleware(
 )
 
 
-# Verification automatique : toutes les dix minutes, le serveur tranche les
-# fiches dont le match est termine. Sans elle, le bilan ne bougeait que si
-# quelqu'un cliquait « Verifier », et restait faux entre-temps. N'interroge la
-# source que s'il y a des fiches mures.
-VERIFICATION_AUTO_MINUTES = 10
+# Planificateur (`prevision/planificateur.py`) : toutes les dix minutes, le
+# serveur tranche les fiches terminees, reemet celles dont le match commence
+# dans 30 a 90 minutes (arbitre, compositions), et emet toutes les six heures
+# les grandes competitions sur deux jours. `IBET_PLANIFICATEUR` : « 0 » le
+# coupe, « verifier » ne garde que la verification et la reemission.
+def _planifier_en_continu() -> None:
+    import os
 
+    from ibet.prevision import planificateur
 
-def _verifier_en_continu() -> None:
-    import time
-
-    while True:
-        try:
-            _, tz_name = api_client.resolve_settings("flashscore", None)
-            if verify.due_count(tz_name):
-                verify.verify_store(tz_name)
-        except Exception as exc:  # noqa: BLE001 - un echec ne doit pas arreter la boucle
-            print("Verification automatique : %s" % exc, flush=True)
-        time.sleep(VERIFICATION_AUTO_MINUTES * 60)
+    mode = os.getenv("IBET_PLANIFICATEUR", "1").strip().lower()
+    if mode == "0":
+        return
+    planificateur.tourner(avec_emission=(mode != "verifier"))
 
 
 @app.on_event("startup")
-def _demarrer_verification_auto() -> None:
+def _demarrer_planificateur() -> None:
     import threading
 
-    threading.Thread(target=_verifier_en_continu, name="verification-auto", daemon=True).start()
+    threading.Thread(target=_planifier_en_continu, name="planificateur", daemon=True).start()
+
+
+def _etat_planificateur() -> dict[str, Any]:
+    from ibet.prevision import planificateur
+
+    return planificateur.resume()
 
 
 def _today(tz_name: str) -> str:
@@ -202,6 +204,7 @@ def list_predictions(
         # L'ordinateur peut ne plus etre a l'heure (13 h 32 de retard le
         # 28/09/2026) : le serveur se corrige, l'ecran le signale.
         "horloge": horloge.etat(),
+        "planificateur": _etat_planificateur(),
     }
 
 
@@ -460,6 +463,23 @@ def measurement_report() -> dict[str, Any]:
     Lit la base et rien d'autre : ni reseau, ni ecriture.
     """
     return {"marche": marche.bilan(), "criteres": criteres.bilan()}
+
+
+@app.get("/api/calibration")
+def calibration() -> dict[str, Any]:
+    """Ce que les propositions tranchees disent de la sincerite du modele.
+
+    Annonce contre observe, avec l'erreur type groupee par match : par tranche
+    de probabilite, par famille, par sens (« plus » / « moins ») et par version
+    de modele. Lit la base, sans reseau ni ecriture.
+    """
+    from ibet.evaluation import etude
+
+    return dict(
+        verify.bilan_par_option(),
+        par_sens=verify.bilan_par_sens(),
+        par_version=etude.bilan(),
+    )
 
 
 @app.get("/api/composeur")
@@ -790,7 +810,17 @@ def main(argv: list[str] | None = None) -> int:
         "--sans-rechargement", action="store_true",
         help="Ne pas relancer le serveur a chaque modification du code",
     )
+    parser.add_argument(
+        "--planificateur", choices=("1", "verifier", "0"), default=None,
+        help="1 : verifier, reemettre avant le match et emettre (defaut) ; "
+        "verifier : sans emission nouvelle ; 0 : rien d'automatique",
+    )
     args = parser.parse_args(argv)
+    if args.planificateur is not None:
+        import os
+
+        # Transmis au processus uvicorn, qui l'herite.
+        os.environ["IBET_PLANIFICATEUR"] = args.planificateur
     if not args.sans_rechargement:
         return _servir_avec_rechargement(args.port)
     uvicorn.run("ibet.interfaces.serveur:app", host="127.0.0.1", port=args.port)
